@@ -18,7 +18,7 @@ const int SIZE_CCSDS_HEADER = 6;
 
 const int PACKET_SIZE = 1024;
 
-int main(int argc, char** argv) {
+int main(int, char** argv) {
   unsigned char buf[PACKET_SIZE];
 
   int total_sec = std::atoi(argv[1]);
@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
     unsigned int len = buf[4];
     len = (len<<8) + buf[5];
     len += SIZE_CCSDS_HEADER + 1;
-    std::printf("%d\n", len);
+    std::printf("%u\n", len);
   } else {
     std::printf("none\n");
   }

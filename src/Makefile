@@ -45,4 +45,4 @@ check: test
 
 .PHONY: clean
 clean:
-	$(RM) rigel_read.o rigel_write.o rigel_ccsds_size.o rigel_read rigel_write rigel_ccsds_size librigel.so rigel_scan.o rigel_scan rigel_init.o rigel_init test.o test
+	$(RM) rigel.o rigel_read.o rigel_write.o rigel_ccsds_size.o rigel_read rigel_write rigel_ccsds_size librigel.so librigel.a rigel_scan.o rigel_scan rigel_init.o rigel_init test.o test

@@ -86,6 +86,13 @@ int main() {
     check(seen[0] && seen[1] && seen[2] && seen[3], "Scan enumerates all written indices");
   }
 
+  // ScanInit(start) はstartより前のindexを飛ばす
+  {
+    check(rigel.ScanInit(2), "ScanInit(start=2) succeeds");
+    int idx = rigel.ScanNext();
+    check(idx == 2, "ScanInit(start) skips indices before start");
+  }
+
   // メタデータ経由のInit(dirname)
   {
     const char* meta_dir = "/tmp/rigel_test_meta";

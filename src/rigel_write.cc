@@ -38,7 +38,7 @@ int ParseTotalSecFromFilename(const char* path) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+int main(int, char** argv) {
   unsigned char buf[PACKET_SIZE];
 
   std::ifstream ccsds(argv[1], std::ios::binary);

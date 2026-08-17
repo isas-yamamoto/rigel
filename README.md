@@ -97,6 +97,20 @@ max_file_count)` も使える。
   `g++ -std=c++11 -fsanitize=thread -pthread rigel.cc test.cc -o test_tsan`
   （通常の`make check`は機能的な正しさのみ確認し、raceの有無はThreadSanitizer
   でしか判定できない点に注意）。
+- 同様にAddressSanitizer+UndefinedBehaviorSanitizerでもメモリ安全性/UBを検証:
+  `g++ -std=c++11 -fsanitize=address,undefined -pthread rigel.cc test.cc -o test_asan`
+
+## CI
+
+`.github/workflows/ci.yml` がpush/PR毎に以下を全部実行する:
+
+| job | 内容 |
+|---|---|
+| `build-and-test` | 通常ビルド + `make check` |
+| `strict-warnings` | `-Wall -Wextra -Werror` で再ビルド（警告即エラー） |
+| `thread-sanitizer` | ThreadSanitizerでrace検出 |
+| `address-ub-sanitizer` | AddressSanitizer+UBSanでメモリ安全性/UB検出 |
+| `cppcheck` | 静的解析（`warning`/`performance`/`portability`カテゴリ、findingがあれば失敗） |
 
 ## スレッド安全性
 

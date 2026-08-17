@@ -16,7 +16,7 @@ const int TI_FINISH = 928693490;
 
 const int PACKET_SIZE = 1024;
 
-int main(int argc, char** argv) {
+int main(int, char** argv) {
   unsigned char buf[PACKET_SIZE];
 
   int total_sec = std::atoi(argv[1]);

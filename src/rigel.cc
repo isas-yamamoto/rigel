@@ -233,7 +233,7 @@ Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
 
   DataMapping m;
   m.fd = fd;
-  m.ptr = (unsigned char*)p;
+  m.ptr = static_cast<unsigned char*>(p);
   m.size = this->max_file_size_;
 
   std::pair<std::unordered_map<int, DataMapping>::iterator, bool> res =
@@ -313,7 +313,7 @@ bool Rigel::EnsureIndexSize(size_t min_size) {
     return false;
   }
 
-  this->index_map_.ptr = (unsigned char*)p;
+  this->index_map_.ptr = static_cast<unsigned char*>(p);
   this->index_map_.size = new_size;
   return true;
 }
@@ -420,7 +420,7 @@ bool Rigel::ScanInit(const int start) {
   if (!this->OpenIndexMapping()) {
     return false;
   }
-  this->scan_pos_ = 0;
+  this->scan_pos_ = (start > 0) ? start : 0;
   return true;
 }
 
