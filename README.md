@@ -107,6 +107,10 @@ echo -n "hello" | rigel write /path/to/data 42
 rigel read /path/to/data 42 | hexdump -C
 rigel delete /path/to/data 42        # clears a record back to never-written
 rigel scan /path/to/data          # lists every written index, one per line
+rigel scan /path/to/data 1000     # ... starting from index 1000
+rigel dump /path/to/data          # "index: hex" for every written record
+rigel dump /path/to/data 1000 2000 # ... restricted to indices 1000..2000
+rigel dump /path/to/data --raw | hexdump -C  # concatenated raw bytes instead
 rigel stat /path/to/data          # key, geometry, record count, disk usage
 rigel freeze /path/to/data        # blocks further write/delete (read/scan still work)
 rigel unfreeze /path/to/data      # allows write/delete again

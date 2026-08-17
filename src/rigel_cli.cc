@@ -7,6 +7,8 @@
  *   rigel write <dir> <index>            (reads the raw record from stdin)
  *   rigel delete <dir> <index>           (clears a record back to never-written)
  *   rigel scan  <dir> [start]            (lists written indices, one per line)
+ *   rigel dump  <dir> [start] [end] [--raw]
+ *                                         (prints written records' content)
  *   rigel stat  <dir>                    (prints key/geometry/usage info)
  *   rigel freeze <dir>                   (blocks further Write/Delete)
  *   rigel unfreeze <dir>                 (allows Write/Delete again)
@@ -34,6 +36,10 @@ void PrintUsage(const char* prog) {
       "  write <dir> <index>       read the raw record from stdin\n"
       "  delete <dir> <index>      clear a record back to never-written\n"
       "  scan  <dir> [start]       list written indices, one per line\n"
+      "  dump  <dir> [start] [end] [--raw]\n"
+      "                            print written records' content\n"
+      "                            (default: \"index: hex\" one per line;\n"
+      "                            --raw: concatenated raw bytes)\n"
       "  stat  <dir>               print key/geometry/usage info\n"
       "  freeze <dir>              block further Write/Delete\n"
       "  unfreeze <dir>            allow Write/Delete again\n"
@@ -178,6 +184,65 @@ int CmdScan(int argc, char** argv) {
   return 0;
 }
 
+int CmdDump(int argc, char** argv) {
+  if (argc < 2) {
+    std::fprintf(stderr, "usage: rigel dump <dir> [start] [end] [--raw]\n");
+    return 1;
+  }
+
+  // --raw can appear anywhere after <dir>; strip it out before parsing the
+  // remaining args as positional start/end.
+  bool raw = false;
+  std::vector<char*> positional;
+  positional.push_back(argv[0]);
+  for (int i = 1; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--raw") == 0) {
+      raw = true;
+    } else {
+      positional.push_back(argv[i]);
+    }
+  }
+
+  const char* dirname = positional[1];
+  int start = (positional.size() > 2) ? std::atoi(positional[2]) : 0;
+  int end = (positional.size() > 3) ? std::atoi(positional[3]) : -1; // -1 = no upper bound
+
+  rigel::Rigel rigel;
+  if (!rigel.Init(dirname)) {
+    std::fprintf(stderr, "rigel dump: %s\n", rigel.LastError());
+    return 1;
+  }
+
+  if (!rigel.ScanInit(start)) {
+    std::fprintf(stderr, "rigel dump: %s\n", rigel.LastError());
+    return 1;
+  }
+
+  std::vector<unsigned char> buf(rigel.BlockSize());
+  std::vector<char> hex(buf.size() * 2 + 1);
+  int idx;
+  while ((idx = rigel.ScanNext()) >= 0) {
+    if (end >= 0 && idx > end) {
+      break;
+    }
+    ssize_t n = rigel.Read(idx, buf.data(), buf.size());
+    if (n < 0) {
+      std::fprintf(stderr, "rigel dump: %s\n", rigel.LastError());
+      return 1;
+    }
+    if (raw) {
+      std::fwrite(buf.data(), 1, (size_t)n, stdout);
+    } else {
+      for (ssize_t i = 0; i < n; ++i) {
+        std::snprintf(&hex[i * 2], 3, "%02x", buf[i]);
+      }
+      hex[n * 2] = '\0';
+      std::printf("%d: %s\n", idx, hex.data());
+    }
+  }
+  return 0;
+}
+
 int CmdStat(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr, "usage: rigel stat <dir>\n");
@@ -263,6 +328,9 @@ int main(int argc, char** argv) {
   }
   if (std::strcmp(cmd, "scan") == 0) {
     return CmdScan(sub_argc, sub_argv);
+  }
+  if (std::strcmp(cmd, "dump") == 0) {
+    return CmdDump(sub_argc, sub_argv);
   }
   if (std::strcmp(cmd, "stat") == 0) {
     return CmdStat(sub_argc, sub_argv);

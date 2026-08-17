@@ -54,6 +54,13 @@ add_executable(rigel_test_c tests/test_c.c)
 target_link_libraries(rigel_test_c PRIVATE rigel)
 add_test(NAME rigel_test_c COMMAND rigel_test_c)
 
+# Drives the built rigel_cli binary as a subprocess; needs its absolute
+# path since ctest's working directory can't be relied on to match it.
+add_executable(rigel_test_cli tests/test_cli.cc)
+target_compile_definitions(rigel_test_cli PRIVATE
+  RIGEL_CLI_PATH="$<TARGET_FILE:rigel_cli>")
+add_test(NAME rigel_test_cli COMMAND rigel_test_cli)
+
 include(GNUInstallDirs)
 
 install(TARGETS rigel rigel_static rigel_cli

@@ -1,0 +1,114 @@
+/**
+ * Functional test for the `rigel` CLI binary (src/rigel_cli.cc), invoked as
+ * a subprocess exactly as a real user would run it. Focused on `dump`,
+ * which has logic (hex-encoding, start/end filtering, --raw) that lives
+ * only in the CLI and isn't exercised by tests/test.cc (library-level) or
+ * tests/test_c.c (C bindings).
+ *
+ * RIGEL_CLI_PATH is the built rigel_cli binary's absolute path, injected by
+ * CMakeLists.txt via $<TARGET_FILE:rigel_cli> so this test doesn't depend
+ * on the working directory ctest happens to run it from.
+ */
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <sys/stat.h>
+#include <unistd.h>
+
+namespace {
+
+int g_fail = 0;
+
+void check(bool cond, const char* label) {
+  if (cond) {
+    std::printf("PASS: %s\n", label);
+  } else {
+    std::printf("FAIL: %s\n", label);
+    g_fail++;
+  }
+}
+
+// Runs cmd via the shell and returns everything it wrote to stdout.
+std::string RunCapture(const std::string& cmd) {
+  FILE* p = ::popen(cmd.c_str(), "r");
+  if (p == NULL) {
+    return "";
+  }
+  std::string out;
+  char buf[4096];
+  size_t n;
+  while ((n = std::fread(buf, 1, sizeof(buf), p)) > 0) {
+    out.append(buf, n);
+  }
+  ::pclose(p);
+  return out;
+}
+
+// Runs cmd via the shell, feeding it `input` on stdin. Returns true if the
+// subprocess exited successfully.
+bool RunWithStdin(const std::string& cmd, const std::string& input) {
+  FILE* p = ::popen(cmd.c_str(), "w");
+  if (p == NULL) {
+    return false;
+  }
+  std::fwrite(input.data(), 1, input.size(), p);
+  return ::pclose(p) == 0;
+}
+
+} // namespace
+
+int main() {
+  const std::string cli = RIGEL_CLI_PATH;
+  const std::string dir = "/tmp/rigel_test_cli";
+
+  // Start from a clean slate: `rigel init` refuses to run against a
+  // directory that already has metadata from a previous test run.
+  std::system(("rm -rf " + dir).c_str());
+  ::mkdir(dir.c_str(), 0755);
+
+  check(RunCapture(cli + " init " + dir + " testkey 4 100").find("initialized") == 0,
+        "init succeeds");
+
+  check(RunWithStdin(cli + " write " + dir + " 5", "ab"), "write index 5 succeeds");
+  check(RunWithStdin(cli + " write " + dir + " 7", "cd"), "write index 7 succeeds");
+  check(RunWithStdin(cli + " write " + dir + " 10", "ef"), "write index 10 succeeds");
+
+  // Default (hex) output, no range: every written index, in order.
+  {
+    std::string out = RunCapture(cli + " dump " + dir);
+    check(out == "5: 61620000\n7: 63640000\n10: 65660000\n",
+          "dump with no range prints every written record as \"index: hex\"");
+  }
+
+  // start filters out indices before it.
+  {
+    std::string out = RunCapture(cli + " dump " + dir + " 6");
+    check(out == "7: 63640000\n10: 65660000\n", "dump start filters earlier indices");
+  }
+
+  // end filters out indices after it (inclusive of end itself).
+  {
+    std::string out = RunCapture(cli + " dump " + dir + " 0 7");
+    check(out == "5: 61620000\n7: 63640000\n", "dump end is inclusive and filters later indices");
+  }
+
+  // --raw concatenates the raw block bytes with no index labels.
+  {
+    std::string out = RunCapture(cli + " dump " + dir + " --raw");
+    // Built byte-by-byte (not a "ab\0\0cd..." string literal) since a
+    // literal's embedded NULs would need explicit sizing anyway to survive
+    // std::string's usual strlen-based construction.
+    unsigned char raw_expected[12] = {'a', 'b', 0, 0, 'c', 'd', 0, 0, 'e', 'f', 0, 0};
+    std::string raw_expected_str(reinterpret_cast<char*>(raw_expected), sizeof(raw_expected));
+    check(out == raw_expected_str, "dump --raw emits concatenated raw block bytes");
+  }
+
+  std::system(("rm -rf " + dir).c_str());
+
+  if (g_fail == 0) {
+    std::printf("All tests passed\n");
+  } else {
+    std::printf("%d test(s) failed\n", g_fail);
+  }
+  return g_fail == 0 ? 0 : 1;
+}

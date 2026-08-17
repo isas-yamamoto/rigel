@@ -16,7 +16,7 @@ BINDIR=$(PREFIX)/bin
 .SUFFIXES: .cc .o .so
 
 .PHONY: all
-all: rigel librigel.so librigel.a test test_c
+all: rigel librigel.so librigel.a test test_c test_cli
 
 .cc.o:
 	$(CXX) $(CXXFLAGS) -c $<
@@ -37,6 +37,15 @@ test_c: test_c.o librigel.so
 test_c.o: ../tests/test_c.c
 	$(CC) $(CFLAGS) -I. -c $< -o $@
 
+# Drives the built ./rigel binary as a subprocess, so it needs rigel built
+# first; RIGEL_CLI_PATH is this directory's ./rigel (an absolute path, so
+# the test doesn't depend on the working directory it's run from).
+test_cli: test_cli.o rigel
+	$(CXX) $(LDFLAGS) -o $@ $<
+
+test_cli.o: ../tests/test_cli.cc rigel
+	$(CXX) $(CXXFLAGS) -I. -DRIGEL_CLI_PATH='"$(CURDIR)/rigel"' -c $< -o $@
+
 librigel.so: $(OBJS)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $(OBJS)
 
@@ -46,9 +55,10 @@ librigel.a: $(OBJS)
 
 
 .PHONY: check
-check: test test_c
+check: test test_c test_cli
 	LD_LIBRARY_PATH=. ./test
 	LD_LIBRARY_PATH=. ./test_c
+	LD_LIBRARY_PATH=. ./test_cli
 
 .PHONY: install
 install: all
@@ -66,4 +76,4 @@ uninstall:
 
 .PHONY: clean
 clean:
-	$(RM) rigel.o rigel_meta.o rigel_c.o rigel_cli.o rigel librigel.so librigel.a test.o test test_c.o test_c
+	$(RM) rigel.o rigel_meta.o rigel_c.o rigel_cli.o rigel librigel.so librigel.a test.o test test_c.o test_c test_cli.o test_cli

@@ -8,6 +8,10 @@
   Write/Read from multiple threads (run via `make check`).
 - `tests/test_c.c`: compiled as plain C, exercises `rigel_c.h` to prove
   it's actually callable from C (also run via `make check`).
+- `tests/test_cli.cc`: runs the built `rigel` CLI binary as a subprocess,
+  covering behavior that lives only in the CLI (e.g. `dump`'s hex output,
+  start/end range filtering, `--raw`) and isn't exercised by the
+  library-level or C-binding tests above (also run via `make check`).
 - `tests/test_python.py`: exercises `python/rigel.py` against a real
   built `librigel` (`RIGEL_LIBRARY_PATH=/path/to/librigel.so python3
   tests/test_python.py`); run by the `cmake-build` CI job after install.
