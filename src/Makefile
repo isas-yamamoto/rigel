@@ -1,13 +1,13 @@
 # For RIGEL (Next SIRIUS Project)
 
 CXX=s++
-CXXFLAGS=-Wall -O3 -I/usr/local/include
+CXXFLAGS=-Wall -O3 -std=c++11 -fPIC
 OBJS=rigel.o
 
 .SUFFIXES: .cc .o .so
 
 .PHONY: all
-all: rigel_read rigel_write librigel.so librigel.a rigel_ccsds_size rigel_scan
+all: rigel_read rigel_write librigel.so librigel.a rigel_ccsds_size rigel_scan test
 
 .cc.o:
 	$(CXX) $(CXXFLAGS) -c $<
@@ -24,14 +24,21 @@ rigel_ccsds_size: rigel_ccsds_size.o librigel.so
 rigel_scan: rigel_scan.o librigel.so
 	$(CXX) -o $@ $< -L. -lrigel
 
+test: test.o librigel.so
+	$(CXX) -o $@ $< -L. -lrigel
+
 librigel.so: $(OBJS)
-	$(CXX) $(CXXFLAGS) -fPIC -shared -o $@ $(OBJS)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $(OBJS)
 
 
 librigel.a: $(OBJS)
 	ar rv $@ $(OBJS)
 
 
+.PHONY: check
+check: test
+	LD_LIBRARY_PATH=. ./test
+
 .PHONY: clean
 clean:
-	$(RM) rigel_read.o rigel_write.o rigel_ccsds_size.o rigel_read rigel_write rigel_ccsds_size librigel.so rigel_scan.o rigel_scan
+	$(RM) rigel_read.o rigel_write.o rigel_ccsds_size.o rigel_read rigel_write rigel_ccsds_size librigel.so rigel_scan.o rigel_scan test.o test

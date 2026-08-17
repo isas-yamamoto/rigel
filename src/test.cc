@@ -1,8 +1,93 @@
-#include <sli/tstring.h>
-#include <sli/stdstreamio.h>
+/**
+ * Rigel クラスの簡易動作確認テスト
+ *
+ * data/index ファイルを実際に作成し、Write/Read の一致、
+ * 複数ファイルへの分割（ロールオーバー）、Scan の列挙、
+ * 不正な index に対する安全な失敗を確認する。
+ */
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <cstdio>
+#include <cstring>
+#include "rigel.h"
 
-int main(int argc, char** argv) {
-  sli::stdstreamio sio, ini, ccsds;
-  
-  
+static int g_fail = 0;
+
+static void check(bool cond, const char* label) {
+  if (cond) {
+    std::printf("PASS: %s\n", label);
+  } else {
+    std::printf("FAIL: %s\n", label);
+    g_fail++;
+  }
+}
+
+int main() {
+  const char* dir = "/tmp/rigel_test";
+  ::mkdir(dir, 0755);
+
+  // block_size=64, max_file_count=2 -> max_file_size=128 -> 1ファイルにつき2ブロック
+  const int block_size = 64;
+  const int max_file_count = 2;
+
+  rigel::Rigel rigel;
+  rigel.Init(dir, "t", block_size, max_file_count);
+
+  unsigned char wbuf[4][block_size];
+  for (int i = 0; i < 4; ++i) {
+    std::memset(wbuf[i], 'A' + i, block_size);
+  }
+
+  // index 0,1 は1ファイル目、2,3 は2ファイル目に分かれる
+  for (int i = 0; i < 4; ++i) {
+    ssize_t r = rigel.Write(i, wbuf[i], block_size);
+    check(r == (ssize_t)block_size, "Write returns full block size");
+  }
+
+  for (int i = 0; i < 4; ++i) {
+    unsigned char rbuf[block_size];
+    ssize_t r = rigel.Read(i, rbuf, block_size);
+    check(r == (ssize_t)block_size, "Read returns full block size");
+    check(std::memcmp(rbuf, wbuf[i], block_size) == 0, "Read data matches Write data");
+  }
+
+  // 一度も書いていない index は index ファイル上のフラグが立たず読めない
+  {
+    unsigned char rbuf[block_size];
+    ssize_t r = rigel.Read(100, rbuf, block_size);
+    check(r == -1, "Read of unwritten index fails");
+  }
+
+  // 明らかに範囲外の index は file_index が MAX_FILE_INDEX を超え、安全に失敗する
+  {
+    unsigned char rbuf[block_size];
+    long long huge_index = (long long)rigel::MAX_FILE_INDEX * max_file_count + 1000;
+    ssize_t r = rigel.Read((int)huge_index, rbuf, block_size);
+    check(r == -1, "Read of out-of-range index fails safely");
+  }
+
+  // Scan で書き込んだ index 0..3 が列挙されること
+  {
+    bool seen[4] = {false, false, false, false};
+    int count = 0;
+    check(rigel.ScanInit(), "ScanInit succeeds");
+    int idx;
+    while ((idx = rigel.ScanNext()) >= 0) {
+      if (idx >= 0 && idx < 4) {
+        seen[idx] = true;
+      }
+      count++;
+      if (count > 1000) {
+        break; // 無限ループ防止
+      }
+    }
+    check(seen[0] && seen[1] && seen[2] && seen[3], "Scan enumerates all written indices");
+  }
+
+  if (g_fail == 0) {
+    std::printf("All tests passed\n");
+  } else {
+    std::printf("%d test(s) failed\n", g_fail);
+  }
+  return g_fail == 0 ? 0 : 1;
 }
