@@ -8,6 +8,8 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <cerrno>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +33,7 @@ Rigel::Rigel()
     scan_pos_(0) {
   this->dirname_[0] = '\0';
   this->key_[0] = '\0';
+  this->last_error_[0] = '\0';
 }
 
 /**
@@ -92,7 +95,7 @@ bool Rigel::Init(const char* dirname) {
 
   FILE* f = std::fopen(filename, "r");
   if (f == NULL) {
-    std::fprintf(stderr, "ERROR Rigel::Init metadata not found: %s\n", filename);
+    this->SetError("Init: metadata not found (%s): %s", filename, std::strerror(errno));
     return false;
   }
 
@@ -119,7 +122,7 @@ bool Rigel::Init(const char* dirname) {
   std::fclose(f);
 
   if (key[0] == '\0' || block_size <= 0 || max_file_count <= 0) {
-    std::fprintf(stderr, "ERROR Rigel::Init invalid metadata: %s\n", filename);
+    this->SetError("Init: invalid metadata in %s", filename);
     return false;
   }
 
@@ -141,6 +144,10 @@ bool Rigel::WriteMeta(const char* dirname,
 
   FILE* f = std::fopen(filename, "w");
   if (f == NULL) {
+    // staticメソッドでインスタンスが無くLastError()に載せられないため、
+    // ここだけは直接stderrに出す。
+    std::fprintf(stderr, "Rigel::WriteMeta: fopen(%s) failed: %s\n",
+                  filename, std::strerror(errno));
     return false;
   }
   std::fprintf(f, "key=%s\n", key);
@@ -148,6 +155,26 @@ bool Rigel::WriteMeta(const char* dirname,
   std::fprintf(f, "max_file_count=%d\n", max_file_count);
   std::fclose(f);
   return true;
+}
+
+/**
+ *  @brief 直近の失敗の詳細をlast_error_に記録する(printf形式)。
+ *
+ *  呼び出し側で既にmutex_をロックしている前提で、ここでは改めてロックしない。
+ */
+void Rigel::SetError(const char* fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  std::vsnprintf(this->last_error_, sizeof(this->last_error_), fmt, ap);
+  va_end(ap);
+}
+
+/**
+ *  @brief 直近の失敗の詳細を返す。
+ */
+const char* Rigel::LastError() const {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+  return this->last_error_;
 }
 
 void Rigel::DataFilename(int file_index, char* buf, size_t buflen) const {
@@ -177,17 +204,20 @@ Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
 
   int fd = ::open(filename, O_RDWR | O_CREAT, 0644);
   if (fd < 0) {
-    std::fprintf(stderr, "ERROR Rigel::Open filename=%s\n", filename);
+    this->SetError("open(%s) failed: %s", filename, std::strerror(errno));
     return NULL;
   }
 
   struct stat st;
   if (::fstat(fd, &st) != 0) {
+    this->SetError("fstat(%s) failed: %s", filename, std::strerror(errno));
     ::close(fd);
     return NULL;
   }
   if ((unsigned long long)st.st_size < this->max_file_size_) {
     if (::ftruncate(fd, (off_t)this->max_file_size_) != 0) {
+      this->SetError("ftruncate(%s, %llu) failed: %s",
+                      filename, this->max_file_size_, std::strerror(errno));
       ::close(fd);
       return NULL;
     }
@@ -195,6 +225,8 @@ Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
 
   void* p = ::mmap(NULL, this->max_file_size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   if (p == MAP_FAILED) {
+    this->SetError("mmap(%s, %llu bytes) failed: %s",
+                    filename, this->max_file_size_, std::strerror(errno));
     ::close(fd);
     return NULL;
   }
@@ -227,12 +259,18 @@ bool Rigel::OpenIndexMapping() {
 
   int fd = ::open(filename, O_RDWR | O_CREAT, 0644);
   if (fd < 0) {
+    this->SetError("open(%s) failed: %s", filename, std::strerror(errno));
     return false;
   }
   this->index_map_.fd = fd;
 
   struct stat st;
-  if (::fstat(fd, &st) == 0 && st.st_size > 0) {
+  st.st_size = 0;
+  if (::fstat(fd, &st) != 0) {
+    this->SetError("fstat(%s) failed: %s", filename, std::strerror(errno));
+    // 致命的ではない。新規ファイル(サイズ0)として扱って続行する。
+  }
+  if (st.st_size > 0) {
     if (!this->EnsureIndexSize((size_t)st.st_size)) {
       ::close(fd);
       this->index_map_.fd = -1;
@@ -259,6 +297,7 @@ bool Rigel::EnsureIndexSize(size_t min_size) {
   size_t new_size = chunks * INDEX_GROW_CHUNK;
 
   if (::ftruncate(this->index_map_.fd, (off_t)new_size) != 0) {
+    this->SetError("ftruncate(index, %zu bytes) failed: %s", new_size, std::strerror(errno));
     return false;
   }
 
@@ -270,6 +309,7 @@ bool Rigel::EnsureIndexSize(size_t min_size) {
 
   void* p = ::mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED, this->index_map_.fd, 0);
   if (p == MAP_FAILED) {
+    this->SetError("mmap(index, %zu bytes) failed: %s", new_size, std::strerror(errno));
     return false;
   }
 
@@ -297,6 +337,8 @@ ssize_t Rigel::Write(const int index,
   int file_offset = offset % this->max_file_size_;
 
   if (file_index < 0 || file_index >= MAX_FILE_INDEX) {
+    this->SetError("Write: index %d out of range (file_index=%d, MAX_FILE_INDEX=%d)",
+                    index, file_index, MAX_FILE_INDEX);
     return -1;
   }
 
@@ -305,6 +347,8 @@ ssize_t Rigel::Write(const int index,
     return -1;
   }
   if ((size_t)file_offset + size > dm->size) {
+    this->SetError("Write: size %zu at offset %d exceeds shard size %zu (index=%d)",
+                    size, file_offset, dm->size, index);
     return -1;
   }
   std::memcpy(dm->ptr + file_offset, data, size);
@@ -339,6 +383,8 @@ ssize_t Rigel::Read(const int index,
   int file_offset = offset % this->max_file_size_;
 
   if (file_index < 0 || file_index >= MAX_FILE_INDEX) {
+    this->SetError("Read: index %d out of range (file_index=%d, MAX_FILE_INDEX=%d)",
+                    index, file_index, MAX_FILE_INDEX);
     return -1;
   }
 
@@ -346,7 +392,7 @@ ssize_t Rigel::Read(const int index,
     return -1;
   }
   if (index < 0 || (size_t)index >= this->index_map_.size) {
-    return -1; // ここまで一度も書き込まれていない
+    return -1; // ここまで一度も書き込まれていない(正常系、エラーではない)
   }
   if (this->index_map_.ptr[index] != 1) {
     return -1;

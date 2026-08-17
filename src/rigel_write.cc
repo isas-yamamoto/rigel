@@ -54,9 +54,13 @@ int main(int argc, char** argv) {
 
   rigel::Rigel rigel;
   if (!rigel.Init("/data/rigel/data")) {
+    std::fprintf(stderr, "%s: %s\n", argv[0], rigel.LastError());
     return -1;
   }
-  rigel.Write(index, buf, r);
+  if (rigel.Write(index, buf, r) < 0) {
+    std::fprintf(stderr, "%s: %s\n", argv[0], rigel.LastError());
+    return -1;
+  }
 
   return 0;
 }

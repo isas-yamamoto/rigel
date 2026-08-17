@@ -60,6 +60,14 @@ namespace rigel {
     virtual bool ScanInit(const int start=0);
     virtual int ScanNext();
 
+    // 直近の失敗の詳細(errno由来のメッセージ含む)を返す。Write/Read/ScanInit/
+    // Init(dirname)が失敗を返した直後に呼ぶことを想定している。
+    // "書き込まれていないindexを読んだ"のような正常系の失敗ではセットされない
+    // (実際のI/Oエラー・誤用のみが対象)。マルチスレッドで使う場合、他スレッドが
+    // 次の呼び出しを行う前に読むこと（1インスタンスにつき1つのバッファを使い
+    // 回している）。
+    const char* LastError() const;
+
  private:
 
     // 1つのデータファイル(file_index毎、max_file_size_バイト固定長)をmmapしたもの。
@@ -93,14 +101,22 @@ namespace rigel {
     // for Scan
     int scan_pos_;
 
-    // data_maps_/index_map_/scan_pos_ へのアクセスはこのmutexで直列化する。
-    // Write/Read/ScanInit/ScanNextの入口で1本ロックする粗粒度な実装であり、
-    // 異なるshardへの同時アクセスであっても並列には走らない
+    // 直近の失敗のメッセージ。SetError()で書き込み、LastError()で読む。
+    char last_error_[512];
+
+    // data_maps_/index_map_/scan_pos_/last_error_ へのアクセスはこのmutexで
+    // 直列化する。Write/Read/ScanInit/ScanNextの入口で1本ロックする粗粒度な
+    // 実装であり、異なるshardへの同時アクセスであっても並列には走らない
     // (スレッド安全性を単純かつ確実にすることを優先している)。
-    std::mutex mutex_;
+    // mutableなのはconstメソッドであるLastError()からもロックするため。
+    mutable std::mutex mutex_;
 
     void DataFilename(int file_index, char* buf, size_t buflen) const;
     void IndexFilename(char* buf, size_t buflen) const;
+
+    // 呼び出し側は必ずmutex_を保持した状態で呼ぶこと(自身ではロックしない。
+    // Write/Read/ScanInit/ScanNextから既にロック済みの状態で呼ばれる前提)。
+    void SetError(const char* fmt, ...);
 
     DataMapping* GetDataMapping(int file_index);
     bool OpenIndexMapping();

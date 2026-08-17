@@ -65,7 +65,7 @@ move対応を使用）。
 
 rigel::Rigel rigel;
 if (!rigel.Init("/path/to/data")) {
-  // rigel_init前 or メタデータ破損
+  fprintf(stderr, "init failed: %s\n", rigel.LastError());  // rigel_init前 or メタデータ破損
 }
 
 unsigned char buf[1024] = { ... };
@@ -110,6 +110,23 @@ max_file_count)` も使える。
 - 対象外: 複数「プロセス」から同じディレクトリへ同時に書き込む場合の排他制御
   （flock等のファイルロック）は行っていない。プロセス間の同時書き込みが必要な
   場合は呼び出し側で調整すること。
+
+## エラー処理・ログ規約
+
+- ライブラリ自身は基本的にstderrへ何も出力しない。実際のI/Oエラー(open/fstat/
+  ftruncate/mmapの失敗)は`errno`由来の理由込みで`LastError()`に記録するだけで、
+  出力するかどうか・どこに出すかは呼び出し側が決める。
+  例外は`WriteMeta()`（static、インスタンスが無く`LastError()`に載せられない
+  ため、失敗時のみ直接stderrに出す）。
+- `Write`/`Read`/`ScanInit`/`Init(dirname)`が失敗(`-1`/`false`)を返した直後に
+  `LastError()`を呼べば理由が取れる。次にこのインスタンスへの呼び出しが起きる
+  前に読むこと（1インスタンスにつき1つのバッファを使い回している）。
+- 失敗には2種類ある。**正常系**（未書き込みのindexを`Read`した、など）では
+  `LastError()`はセットされない――呼び出し側のバグではないため。**誤用/実際の
+  エラー**（範囲外のindex、shardサイズを超える書き込み、open/mmapの失敗など）
+  では具体的な理由がセットされる。
+- CLIツール(`rigel_read`等)は`Init()`失敗時に`argv[0]: <LastError()>`という形で
+  stderrへ出す。実装例として参照可。
 
 ## 制約・注意点
 

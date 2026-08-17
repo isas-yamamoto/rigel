@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
   }
 
   if (!rigel::Rigel::WriteMeta(dirname, key, block_size, max_file_count)) {
-    std::fprintf(stderr, "ERROR: failed to write metadata to %s\n", dirname);
+    // WriteMeta自体が失敗理由をstderrに出す。
     return 1;
   }
 

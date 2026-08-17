@@ -106,6 +106,29 @@ int main() {
           "Init(dirname) fails when metadata is missing");
   }
 
+  // LastError(): 正常系(未書き込みindexの読み込み)ではセットされず、
+  // 誤用(範囲外index)では具体的な理由が載ることを確認する。
+  {
+    const char* err_dir = "/tmp/rigel_test_lasterror";
+    ::mkdir(err_dir, 0755);
+
+    rigel::Rigel r4;
+    r4.Init(err_dir, "err", 64, 2);
+
+    unsigned char rbuf[64];
+    check(r4.Read(0, rbuf, 64) == -1, "Read of unwritten index still fails");
+    check(std::strlen(r4.LastError()) == 0,
+          "LastError is empty after a normal not-found Read (not a real error)");
+
+    long long huge_index = (long long)rigel::MAX_FILE_INDEX * 2 + 1000;
+    unsigned char wbuf3[64];
+    std::memset(wbuf3, 0, 64);
+    ssize_t r = r4.Write((int)huge_index, wbuf3, 64);
+    check(r == -1, "Write of out-of-range index fails");
+    check(std::strstr(r4.LastError(), "out of range") != NULL,
+          "LastError reports the out-of-range reason after misuse");
+  }
+
   // スレッド安全性: 複数スレッドから同一Rigelインスタンスへ同時にWrite/Readしても
   // 壊れないことを確認する(shardを跨ぐ書き込みでdata_maps_への挿入も競合させる)。
   {
