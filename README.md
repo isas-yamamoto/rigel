@@ -4,8 +4,8 @@
 
 A C++ library for fast reads/writes of fixed-size records keyed by a
 sequential integer ID (0, 1, 2, ...). Built for cases like satellite
-telemetry (e.g. the REDACTED/REDACTED spacecraft's instruments), where large
-volumes of fixed-size packets need to be stored and looked up by time.
+telemetry, where large volumes of fixed-size packets need to be stored
+and looked up by time.
 
 ## Features
 
