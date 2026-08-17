@@ -98,10 +98,11 @@ bool ReadMetaFile(const char* dirname, char* key, size_t key_len,
  *  key/block_size/max_file_count found there.
  *
  *  @param[in] dirname directory name
+ *  @param[in] read_only see the other Init() overload in rigel.h
  *  @return true if the metadata was read and initialization succeeded.
  *  false if the metadata is missing or malformed.
  */
-bool Rigel::Init(const char* dirname) {
+bool Rigel::Init(const char* dirname, const bool read_only) {
   char key[MAX_KEY_SIZE];
   int block_size, max_file_count, index_offset;
   bool frozen;
@@ -117,7 +118,7 @@ bool Rigel::Init(const char* dirname) {
     return false;
   }
 
-  this->Init(dirname, key, block_size, max_file_count, index_offset);
+  this->Init(dirname, key, block_size, max_file_count, index_offset, read_only);
   this->frozen_ = frozen;
   return true;
 }

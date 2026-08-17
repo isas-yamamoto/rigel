@@ -66,6 +66,7 @@ Rigel::Rigel()
     max_file_size_(0),
     index_offset_(0),
     frozen_(false),
+    read_only_(false),
     scan_pos_(0) {
   this->dirname_[0] = '\0';
   this->key_[0] = '\0';
@@ -107,11 +108,13 @@ void Rigel::Init(const char* dirname,
                  const char* key,
                  const int block_size,
                  const int max_file_count,
-                 const int index_offset) {
+                 const int index_offset,
+                 const bool read_only) {
   this->block_size_ = block_size;
   this->max_file_size_ = (unsigned long long)max_file_count * block_size;
   this->index_offset_ = index_offset;
   this->frozen_ = false;
+  this->read_only_ = read_only;
 
   std::strncpy(this->dirname_, dirname, MAXPATHLEN-1);
   this->dirname_[MAXPATHLEN-1] = '\0';
@@ -167,7 +170,7 @@ Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
   char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
   this->DataFilename(file_index, filename, sizeof(filename));
 
-  int fd = ::open(filename, O_RDWR | O_CREAT, 0644);
+  int fd = ::open(filename, this->read_only_ ? O_RDONLY : (O_RDWR | O_CREAT), 0644);
   if (fd < 0) {
     this->SetError("open(%s) failed: %s", filename, std::strerror(errno));
     return NULL;
@@ -179,7 +182,16 @@ Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
     ::close(fd);
     return NULL;
   }
-  if ((unsigned long long)st.st_size < this->max_file_size_) {
+
+  // read_only never ftruncates (the fd may not even be writable) - map
+  // exactly the file's current size instead of growing it to
+  // max_file_size_, so a shard that's smaller than expected fails with a
+  // clean mmap-length/SIGBUS-avoiding size rather than silently assuming
+  // bytes that were never written.
+  size_t map_size = this->max_file_size_;
+  if (this->read_only_) {
+    map_size = (size_t)st.st_size;
+  } else if ((unsigned long long)st.st_size < this->max_file_size_) {
     if (::ftruncate(fd, (off_t)this->max_file_size_) != 0) {
       this->SetError("ftruncate(%s, %llu) failed: %s",
                       filename, this->max_file_size_, std::strerror(errno));
@@ -188,10 +200,11 @@ Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
     }
   }
 
-  void* p = ::mmap(NULL, this->max_file_size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  int prot = this->read_only_ ? PROT_READ : (PROT_READ | PROT_WRITE);
+  void* p = ::mmap(NULL, map_size, prot, MAP_SHARED, fd, 0);
   if (p == MAP_FAILED) {
-    this->SetError("mmap(%s, %llu bytes) failed: %s",
-                    filename, this->max_file_size_, std::strerror(errno));
+    this->SetError("mmap(%s, %zu bytes) failed: %s",
+                    filename, map_size, std::strerror(errno));
     ::close(fd);
     return NULL;
   }
@@ -199,7 +212,7 @@ Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
   DataMapping m;
   m.fd = fd;
   m.ptr = static_cast<unsigned char*>(p);
-  m.size = this->max_file_size_;
+  m.size = map_size;
 
   std::pair<std::unordered_map<int, DataMapping>::iterator, bool> res =
       this->data_maps_.insert(std::make_pair(file_index, m));
@@ -260,8 +273,15 @@ bool Rigel::OpenIndexMapping() {
   char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
   this->IndexFilename(filename, sizeof(filename));
 
-  int fd = ::open(filename, O_RDWR | O_CREAT, 0644);
+  int fd = ::open(filename, this->read_only_ ? O_RDONLY : (O_RDWR | O_CREAT), 0644);
   if (fd < 0) {
+    if (this->read_only_ && errno == ENOENT) {
+      // Nothing has ever been written under a read_only handle that can't
+      // create the index file itself - not an error, just an empty index
+      // (Read/ScanNext already treat index_map_.ptr == NULL as "not
+      // found"/"exhausted").
+      return true;
+    }
     this->SetError("open(%s) failed: %s", filename, std::strerror(errno));
     return false;
   }
@@ -274,7 +294,18 @@ bool Rigel::OpenIndexMapping() {
     // Not fatal - proceed as if this were a fresh, empty file.
   }
   if (st.st_size > 0) {
-    if (!this->EnsureIndexSize((size_t)st.st_size)) {
+    if (this->read_only_) {
+      void* p = ::mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+      if (p == MAP_FAILED) {
+        this->SetError("mmap(index, %llu bytes) failed: %s",
+                        (unsigned long long)st.st_size, std::strerror(errno));
+        ::close(fd);
+        this->index_map_.fd = -1;
+        return false;
+      }
+      this->index_map_.ptr = static_cast<unsigned char*>(p);
+      this->index_map_.size = (size_t)st.st_size;
+    } else if (!this->EnsureIndexSize((size_t)st.st_size)) {
       ::close(fd);
       this->index_map_.fd = -1;
       return false;
@@ -335,6 +366,10 @@ ssize_t Rigel::Write(const int index,
                      size_t size) {
   std::lock_guard<std::mutex> lock(this->mutex_);
 
+  if (this->read_only_) {
+    this->SetError("Write: handle is read-only (see Init's read_only param)");
+    return -1;
+  }
   if (this->frozen_) {
     this->SetError("Write: directory is frozen (see Rigel::SetFrozen)");
     return -1;
@@ -391,6 +426,10 @@ ssize_t Rigel::Write(const int index,
 bool Rigel::Delete(const int index) {
   std::lock_guard<std::mutex> lock(this->mutex_);
 
+  if (this->read_only_) {
+    this->SetError("Delete: handle is read-only (see Init's read_only param)");
+    return false;
+  }
   if (this->frozen_) {
     this->SetError("Delete: directory is frozen (see Rigel::SetFrozen)");
     return false;

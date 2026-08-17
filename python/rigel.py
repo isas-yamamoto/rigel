@@ -48,11 +48,11 @@ _lib.rigel_c_destroy.argtypes = [ctypes.c_void_p]
 _lib.rigel_c_init.restype = None
 _lib.rigel_c_init.argtypes = [
     ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p,
-    ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
 ]
 
 _lib.rigel_c_init_from_meta.restype = ctypes.c_int
-_lib.rigel_c_init_from_meta.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+_lib.rigel_c_init_from_meta.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
 
 _lib.rigel_c_write_meta.restype = ctypes.c_int
 _lib.rigel_c_write_meta.argtypes = [
@@ -92,6 +92,9 @@ _lib.rigel_c_index_offset.argtypes = [ctypes.c_void_p]
 _lib.rigel_c_frozen.restype = ctypes.c_int
 _lib.rigel_c_frozen.argtypes = [ctypes.c_void_p]
 
+_lib.rigel_c_read_only.restype = ctypes.c_int
+_lib.rigel_c_read_only.argtypes = [ctypes.c_void_p]
+
 _lib.rigel_c_set_frozen.restype = ctypes.c_int
 _lib.rigel_c_set_frozen.argtypes = [ctypes.c_char_p, ctypes.c_int]
 
@@ -120,10 +123,17 @@ _lib.rigel_c_stat.argtypes = [ctypes.c_void_p, ctypes.POINTER(RigelCStat)]
 class Rigel:
     """A Rigel data directory. Pass only `dirname` to read its existing
     rigel.meta; pass `key` too to initialize directly (mirrors
-    rigel::Rigel::Init's two overloads)."""
+    rigel::Rigel::Init's two overloads).
+
+    read_only opens data/index files with no write access needed at all
+    (O_RDONLY, mmap PROT_READ) - use it against a directory this process
+    can't write to, e.g. a read-only NFS export. write()/delete() then
+    fail on this instance (see the `read_only` property); unlike `frozen`,
+    this isn't stored in rigel.meta - it only affects this instance.
+    """
 
     def __init__(self, dirname, key=None, block_size=None,
-                 max_file_count=None, index_offset=0):
+                 max_file_count=None, index_offset=0, read_only=False):
         # Bound to the instance (not looked up on the module's `_lib`
         # global in close()/__del__) because at interpreter shutdown
         # Python clears module globals before running an object's
@@ -132,7 +142,7 @@ class Rigel:
         self._destroy = _lib.rigel_c_destroy
         self._handle = _lib.rigel_c_create()
         if key is None:
-            if not _lib.rigel_c_init_from_meta(self._handle, dirname.encode()):
+            if not _lib.rigel_c_init_from_meta(self._handle, dirname.encode(), int(read_only)):
                 err = self.last_error()
                 _lib.rigel_c_destroy(self._handle)
                 self._handle = None
@@ -142,7 +152,7 @@ class Rigel:
                 self._handle, dirname.encode(), key.encode(),
                 block_size if block_size is not None else DEFAULT_BLOCK_SIZE,
                 max_file_count if max_file_count is not None else DEFAULT_MAX_FILE_COUNT,
-                index_offset,
+                index_offset, int(read_only),
             )
 
     @staticmethod
@@ -229,6 +239,10 @@ class Rigel:
     @property
     def frozen(self):
         return bool(_lib.rigel_c_frozen(self._handle))
+
+    @property
+    def read_only(self):
+        return bool(_lib.rigel_c_read_only(self._handle))
 
     def close(self):
         if self._handle is not None:

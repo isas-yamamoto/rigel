@@ -69,6 +69,30 @@ def main():
     with rigel.Rigel(off_dir) as r2:
         check(r2.read(1001) == b"Y" * 8, "reopening the directory reads back prior writes")
 
+    # read_only: chmod the shard/index files themselves (not just the
+    # directory - opening an already-existing file only needs permission on
+    # the file, not on its containing directory) to prove this actually
+    # needs no write access, e.g. against a read-only NFS export.
+    shard_path = os.path.join(off_dir, "py.0000")
+    index_path = os.path.join(off_dir, "py.index")
+    os.chmod(shard_path, 0o444)
+    os.chmod(index_path, 0o444)
+    try:
+        with rigel.Rigel(off_dir) as r3:
+            check(r3.read(1001) is None,
+                  "read without read_only fails against files with no write permission")
+
+        with rigel.Rigel(off_dir, read_only=True) as rro:
+            check(rro.read_only, "read_only reads back True")
+            check(rro.read(1001) == b"Y" * 8,
+                  "read_only=True succeeds against files with no write permission")
+            check(rro.write(1001, b"Z" * 8) == -1, "write fails on a read_only instance")
+            check(rro.delete(1001) is False, "delete fails on a read_only instance")
+            check(list(rro.scan()) == [1001], "scan works on a read_only instance")
+    finally:
+        os.chmod(shard_path, 0o644)
+        os.chmod(index_path, 0o644)
+
     try:
         rigel.Rigel("/tmp/rigel_test_python_nonexistent")
         check(False, "Rigel(dirname) raises RigelError for a missing rigel.meta")

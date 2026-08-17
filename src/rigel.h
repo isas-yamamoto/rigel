@@ -42,17 +42,27 @@ namespace rigel {
     // Delete/ScanInit/ScanNext all add/subtract it so every caller sharing
     // this directory (via the same index_offset in rigel.meta) agrees on
     // what index N means, without each one hand-rolling the arithmetic.
+    //
+    // read_only opens data/index files O_RDONLY (no O_CREAT) and mmaps them
+    // PROT_READ, so it works against a directory where the process has no
+    // write permission at all - e.g. a read-only NFS export or filesystem
+    // mount. Write/Delete fail on such a handle (see ReadOnly()). This is
+    // an in-process open mode, not persisted state - unlike frozen_ (set via
+    // SetFrozen(), stored in rigel.meta, visible to every handle that reads
+    // it), read_only only affects this one Rigel instance.
     virtual void Init(const char* dirname,
                       const char* key,
                       const int block_size=BLOCK_SIZE,
                       const int max_file_count=MAX_FILE_COUNT,
-                      const int index_offset=0);
+                      const int index_offset=0,
+                      const bool read_only=false);
 
     // Initializes by reading key/block_size/max_file_count/index_offset
     // from the metadata file under dirname (written by WriteMeta). Returns
     // false if the metadata is missing or malformed. index_offset defaults
-    // to 0 if the metadata predates it.
-    virtual bool Init(const char* dirname);
+    // to 0 if the metadata predates it. See the other Init() overload for
+    // what read_only does.
+    virtual bool Init(const char* dirname, const bool read_only=false);
 
     // Writes key/block_size/max_file_count/index_offset as metadata under
     // dirname. Normally called from the rigel_init command.
@@ -134,6 +144,11 @@ namespace rigel {
     // fail, Read/Scan still work.
     bool Frozen() const { return this->frozen_; }
 
+    // True if this handle was opened with Init's read_only=true: Write/
+    // Delete fail, Read/Scan still work. Unlike Frozen(), this is local to
+    // this instance, not read from rigel.meta.
+    bool ReadOnly() const { return this->read_only_; }
+
  private:
 
     // A single data file (one per file_index, fixed at max_file_size_
@@ -160,6 +175,7 @@ namespace rigel {
     unsigned long long max_file_size_;
     int index_offset_;
     bool frozen_;
+    bool read_only_;
     char dirname_[MAXPATHLEN];
     char key_[MAX_KEY_SIZE];
 

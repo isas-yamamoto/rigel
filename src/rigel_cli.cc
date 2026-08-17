@@ -3,13 +3,15 @@
  *
  * Usage:
  *   rigel init  <dir> <key> [block_size] [max_file_count] [index_offset]
- *   rigel read  <dir> <index>            (writes the raw record to stdout)
+ *   rigel read  <dir> <index> [--read-only]
+ *                                         (writes the raw record to stdout)
  *   rigel write <dir> <index>            (reads the raw record from stdin)
  *   rigel delete <dir> <index>           (clears a record back to never-written)
- *   rigel scan  <dir> [start]            (lists written indices, one per line)
- *   rigel dump  <dir> [start] [end] [--raw]
+ *   rigel scan  <dir> [start] [--read-only]
+ *                                         (lists written indices, one per line)
+ *   rigel dump  <dir> [start] [end] [--raw] [--read-only]
  *                                         (prints written records' content)
- *   rigel stat  <dir>                    (prints key/geometry/usage info)
+ *   rigel stat  <dir> [--read-only]      (prints key/geometry/usage info)
  *   rigel freeze <dir>                   (blocks further Write/Delete)
  *   rigel unfreeze <dir>                 (allows Write/Delete again)
  *   rigel version                        (prints the library version)
@@ -32,19 +34,43 @@ void PrintUsage(const char* prog) {
       "\n"
       "commands:\n"
       "  init  <dir> <key> [block_size] [max_file_count] [index_offset]\n"
-      "  read  <dir> <index>       write the raw record to stdout\n"
+      "  read  <dir> <index> [--read-only]\n"
+      "                            write the raw record to stdout\n"
       "  write <dir> <index>       read the raw record from stdin\n"
       "  delete <dir> <index>      clear a record back to never-written\n"
-      "  scan  <dir> [start]       list written indices, one per line\n"
-      "  dump  <dir> [start] [end] [--raw]\n"
+      "  scan  <dir> [start] [--read-only]\n"
+      "                            list written indices, one per line\n"
+      "  dump  <dir> [start] [end] [--raw] [--read-only]\n"
       "                            print written records' content\n"
       "                            (default: \"index: hex\" one per line;\n"
       "                            --raw: concatenated raw bytes)\n"
-      "  stat  <dir>               print key/geometry/usage info\n"
+      "  stat  <dir> [--read-only] print key/geometry/usage info\n"
+      "\n"
+      "  --read-only (on read/scan/dump/stat): opens the directory with no\n"
+      "  write access needed at all, so it works against files/mounts this\n"
+      "  process can't write to (e.g. a read-only NFS export).\n"
       "  freeze <dir>              block further Write/Delete\n"
       "  unfreeze <dir>            allow Write/Delete again\n"
       "  version                   print the library version\n",
       prog);
+}
+
+// Removes every argv entry equal to `flag`, setting *found if any were
+// removed. argv[0] (the subcommand's own name, used in usage messages) is
+// always kept. Lets a boolean flag appear anywhere after the positional
+// args without a full argument-parsing library.
+std::vector<char*> StripFlag(int argc, char** argv, const char* flag, bool* found) {
+  *found = false;
+  std::vector<char*> out;
+  out.push_back(argv[0]);
+  for (int i = 1; i < argc; ++i) {
+    if (std::strcmp(argv[i], flag) == 0) {
+      *found = true;
+    } else {
+      out.push_back(argv[i]);
+    }
+  }
+  return out;
 }
 
 int CmdVersion(int, char**) {
@@ -89,15 +115,20 @@ int CmdInit(int argc, char** argv) {
 }
 
 int CmdRead(int argc, char** argv) {
+  bool read_only;
+  std::vector<char*> positional = StripFlag(argc, argv, "--read-only", &read_only);
+  argc = (int)positional.size();
+  argv = positional.data();
+
   if (argc < 3) {
-    std::fprintf(stderr, "usage: rigel read <dir> <index>\n");
+    std::fprintf(stderr, "usage: rigel read <dir> <index> [--read-only]\n");
     return 1;
   }
   const char* dirname = argv[1];
   int index = std::atoi(argv[2]);
 
   rigel::Rigel rigel;
-  if (!rigel.Init(dirname)) {
+  if (!rigel.Init(dirname, read_only)) {
     std::fprintf(stderr, "rigel read: %s\n", rigel.LastError());
     return 1;
   }
@@ -160,15 +191,20 @@ int CmdDelete(int argc, char** argv) {
 }
 
 int CmdScan(int argc, char** argv) {
+  bool read_only;
+  std::vector<char*> positional = StripFlag(argc, argv, "--read-only", &read_only);
+  argc = (int)positional.size();
+  argv = positional.data();
+
   if (argc < 2) {
-    std::fprintf(stderr, "usage: rigel scan <dir> [start]\n");
+    std::fprintf(stderr, "usage: rigel scan <dir> [start] [--read-only]\n");
     return 1;
   }
   const char* dirname = argv[1];
   int start = (argc > 2) ? std::atoi(argv[2]) : 0;
 
   rigel::Rigel rigel;
-  if (!rigel.Init(dirname)) {
+  if (!rigel.Init(dirname, read_only)) {
     std::fprintf(stderr, "rigel scan: %s\n", rigel.LastError());
     return 1;
   }
@@ -185,22 +221,15 @@ int CmdScan(int argc, char** argv) {
 }
 
 int CmdDump(int argc, char** argv) {
-  if (argc < 2) {
-    std::fprintf(stderr, "usage: rigel dump <dir> [start] [end] [--raw]\n");
-    return 1;
-  }
+  // --raw/--read-only can appear anywhere after <dir>; strip them out
+  // before parsing the remaining args as positional start/end.
+  bool raw, read_only;
+  std::vector<char*> positional = StripFlag(argc, argv, "--raw", &raw);
+  positional = StripFlag((int)positional.size(), positional.data(), "--read-only", &read_only);
 
-  // --raw can appear anywhere after <dir>; strip it out before parsing the
-  // remaining args as positional start/end.
-  bool raw = false;
-  std::vector<char*> positional;
-  positional.push_back(argv[0]);
-  for (int i = 1; i < argc; ++i) {
-    if (std::strcmp(argv[i], "--raw") == 0) {
-      raw = true;
-    } else {
-      positional.push_back(argv[i]);
-    }
+  if (positional.size() < 2) {
+    std::fprintf(stderr, "usage: rigel dump <dir> [start] [end] [--raw] [--read-only]\n");
+    return 1;
   }
 
   const char* dirname = positional[1];
@@ -208,7 +237,7 @@ int CmdDump(int argc, char** argv) {
   int end = (positional.size() > 3) ? std::atoi(positional[3]) : -1; // -1 = no upper bound
 
   rigel::Rigel rigel;
-  if (!rigel.Init(dirname)) {
+  if (!rigel.Init(dirname, read_only)) {
     std::fprintf(stderr, "rigel dump: %s\n", rigel.LastError());
     return 1;
   }
@@ -244,14 +273,19 @@ int CmdDump(int argc, char** argv) {
 }
 
 int CmdStat(int argc, char** argv) {
+  bool read_only;
+  std::vector<char*> positional = StripFlag(argc, argv, "--read-only", &read_only);
+  argc = (int)positional.size();
+  argv = positional.data();
+
   if (argc < 2) {
-    std::fprintf(stderr, "usage: rigel stat <dir>\n");
+    std::fprintf(stderr, "usage: rigel stat <dir> [--read-only]\n");
     return 1;
   }
   const char* dirname = argv[1];
 
   rigel::Rigel rigel;
-  if (!rigel.Init(dirname)) {
+  if (!rigel.Init(dirname, read_only)) {
     std::fprintf(stderr, "rigel stat: %s\n", rigel.LastError());
     return 1;
   }

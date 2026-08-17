@@ -29,14 +29,19 @@ RigelHandle* rigel_c_create(void);
 void rigel_c_destroy(RigelHandle* h);
 
 /* Initializes with dirname/key/block_size/max_file_count/index_offset
- * given directly. */
+ * given directly. read_only opens data/index files O_RDONLY (no O_CREAT)
+ * and mmaps them PROT_READ, so it works with no write permission on
+ * dirname at all (e.g. a read-only NFS export); rigel_c_write()/
+ * rigel_c_delete() then fail on this handle (see rigel_c_read_only()). */
 void rigel_c_init(RigelHandle* h, const char* dirname, const char* key,
-                   int block_size, int max_file_count, int index_offset);
+                   int block_size, int max_file_count, int index_offset,
+                   int read_only);
 
 /* Initializes by reading metadata from dirname/rigel.meta (written by
  * rigel_c_write_meta() or rigel::Rigel::WriteMeta()). Returns 1 on
- * success, 0 if the metadata is missing or malformed. */
-int rigel_c_init_from_meta(RigelHandle* h, const char* dirname);
+ * success, 0 if the metadata is missing or malformed. See rigel_c_init()
+ * for what read_only does. */
+int rigel_c_init_from_meta(RigelHandle* h, const char* dirname, int read_only);
 
 /* Writes key/block_size/max_file_count/index_offset as metadata under
  * dirname (frozen defaults to false; use rigel_c_set_frozen() to freeze an
@@ -74,6 +79,10 @@ int rigel_c_max_file_count(const RigelHandle* h);
 int rigel_c_index_offset(const RigelHandle* h);
 /* 1 if the directory is frozen (Write/Delete fail), 0 otherwise. */
 int rigel_c_frozen(const RigelHandle* h);
+/* 1 if this handle was opened with read_only=1 (Write/Delete fail), 0
+ * otherwise. Unlike rigel_c_frozen(), this is local to this handle, not
+ * read from rigel.meta. */
+int rigel_c_read_only(const RigelHandle* h);
 
 /* Snapshot of key/geometry/usage info, as printed by `rigel stat`. Mirrors
  * rigel::Rigel::Stat. */

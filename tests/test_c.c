@@ -28,7 +28,7 @@ int main(void) {
         "rigel_c_write_meta succeeds");
 
   RigelHandle* h = rigel_c_create();
-  check(rigel_c_init_from_meta(h, dir), "rigel_c_init_from_meta succeeds");
+  check(rigel_c_init_from_meta(h, dir, 0), "rigel_c_init_from_meta succeeds");
   check(rigel_c_index_offset(h) == 1000, "rigel_c_index_offset reads back index_offset");
   check(strcmp(rigel_c_key(h), "capi") == 0, "rigel_c_key reads back key");
 
@@ -57,7 +57,7 @@ int main(void) {
   rigel_c_destroy(h);
 
   h = rigel_c_create();
-  check(rigel_c_init_from_meta(h, dir), "rigel_c_init_from_meta re-reads metadata after freezing");
+  check(rigel_c_init_from_meta(h, dir, 0), "rigel_c_init_from_meta re-reads metadata after freezing");
   check(rigel_c_frozen(h), "rigel_c_frozen is 1 after freezing");
   check(rigel_c_write(h, 1001, wbuf, 8) == -1, "rigel_c_write fails on a frozen directory");
   check(!rigel_c_delete(h, 1001), "rigel_c_delete fails on a frozen directory");
@@ -67,10 +67,28 @@ int main(void) {
   rigel_c_destroy(h);
 
   h = rigel_c_create();
-  check(rigel_c_init_from_meta(h, dir), "rigel_c_init_from_meta re-reads metadata after unfreezing");
+  check(rigel_c_init_from_meta(h, dir, 0), "rigel_c_init_from_meta re-reads metadata after unfreezing");
   check(!rigel_c_frozen(h), "rigel_c_frozen is 0 after unfreezing");
   check(rigel_c_delete(h, 1001), "rigel_c_delete succeeds again after unfreezing");
+  check(rigel_c_write(h, 1001, wbuf, 8) == 8, "rigel_c_write re-adds index 1001 for the read_only checks below");
 
+  rigel_c_destroy(h);
+
+  h = rigel_c_create();
+  check(rigel_c_init_from_meta(h, dir, 1), "rigel_c_init_from_meta(read_only=1) succeeds");
+  check(rigel_c_read_only(h), "rigel_c_read_only is 1 for a read_only handle");
+  check(rigel_c_read(h, 1001, rbuf, 8) == 8, "rigel_c_read works on a read_only handle");
+  check(rigel_c_write(h, 1001, wbuf, 8) == -1, "rigel_c_write fails on a read_only handle");
+  check(!rigel_c_delete(h, 1001), "rigel_c_delete fails on a read_only handle");
+  rigel_c_destroy(h);
+
+  const char* empty_dir = "/tmp/rigel_test_c_empty";
+  mkdir(empty_dir, 0755);
+  h = rigel_c_create();
+  rigel_c_init(h, empty_dir, "capi", 8, 4, 0, 1);
+  check(rigel_c_read_only(h), "rigel_c_init(read_only=1) sets read_only even against a fresh dir");
+  check(rigel_c_read(h, 0, rbuf, 8) == -1,
+        "rigel_c_read on a read_only handle misses cleanly when the index file doesn't exist yet");
   rigel_c_destroy(h);
 
   if (g_fail == 0) {

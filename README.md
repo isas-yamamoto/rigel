@@ -114,6 +114,7 @@ rigel dump /path/to/data --raw | hexdump -C  # concatenated raw bytes instead
 rigel stat /path/to/data          # key, geometry, record count, disk usage
 rigel freeze /path/to/data        # blocks further write/delete (read/scan still work)
 rigel unfreeze /path/to/data      # allows write/delete again
+rigel read /path/to/data 42 --read-only  # works with no write access to the files at all
 ```
 
 `freeze` flips a `frozen` flag in `rigel.meta` in place, without touching
@@ -124,6 +125,17 @@ against accidentally writing into data you've already finished with. A
 handle opened before the freeze keeps its prior in-memory state, same as
 block_size/key/etc.: reopen the directory to pick up a freeze/unfreeze
 made by another process or handle.
+
+`--read-only` (`read`/`scan`/`dump`/`stat`, or `Init`'s `read_only`
+parameter from code) opens data/index files `O_RDONLY` and mmaps them
+`PROT_READ` instead of the default `O_RDWR|O_CREAT`/`PROT_READ|WRITE` -
+so it works even with *no write permission on the directory or files at
+all*, e.g. a directory mounted from a read-only NFS export. `write`/
+`delete` then fail on that handle. Unlike `frozen`, this isn't persisted
+in `rigel.meta` - it only affects the one handle that asked for it, and
+a fresh index/shard file that doesn't exist yet is treated as "nothing
+written" rather than an error (since a read-only handle can't create
+one either way).
 
 From code, the only thing needed is `Init(dirname)`:
 
@@ -150,7 +162,9 @@ while ((idx = rigel.ScanNext()) >= 0) {
 
 If you want to specify block_size/max_file_count explicitly from code
 (e.g. small shards for tests), `Init(dirname, key, block_size,
-max_file_count)` is still available.
+max_file_count)` is still available. Both `Init` overloads take a
+trailing `read_only` parameter (default `false`) - see the
+`--read-only`/`read_only` description above.
 
 Besides `rigel.meta`, `dirname` ends up containing data files named
 `<key>.<4-digit file_index>` and an index file named `<key>.index`.
@@ -167,7 +181,7 @@ directory:
 #include "rigel_c.h"
 
 RigelHandle* h = rigel_c_create();
-if (!rigel_c_init_from_meta(h, "/path/to/data")) {
+if (!rigel_c_init_from_meta(h, "/path/to/data", /*read_only=*/0)) {
   fprintf(stderr, "init failed: %s\n", rigel_c_last_error(h));
 }
 
@@ -192,6 +206,7 @@ import rigel
 
 r = rigel.Rigel("/path/to/data")               # reads existing rigel.meta
 # or: r = rigel.Rigel("/path/to/data", key="mykey", block_size=1024, max_file_count=131072)
+# or: r = rigel.Rigel("/path/to/data", read_only=True)  # no write access to the files needed
 
 r.write(index, b"hello")
 data = r.read(index)                            # None if never written
@@ -256,3 +271,13 @@ value.
   process that touches many shards over its lifetime doesn't accumulate
   an unbounded number of open file descriptors or mmap'd regions. A
   shard evicted and later touched again is simply reopened.
+- `dirname` on a network filesystem (e.g. NFS): fine for a single
+  process/host at a time, including read-only access from many hosts
+  once no one is writing anymore (see `read_only` above - it's also
+  what lets a *read-only-mounted* NFS export work at all, since the
+  normal open mode needs write access even for `Read`). Concurrent
+  *writers* across hosts are unsafe for the same reason same-host
+  concurrent writers are (no locking, see "Thread safety" below) plus
+  NFS's weaker close-to-open cache consistency: another client's write
+  isn't guaranteed visible to an already-open handle until it reopens
+  the directory.

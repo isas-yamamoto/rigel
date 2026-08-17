@@ -300,6 +300,55 @@ int main() {
           "SetFrozen fails for a directory with no metadata");
   }
 
+  // Read-only handles (Init's read_only param): opens data/index files
+  // O_RDONLY/mmaps PROT_READ instead of O_RDWR|O_CREAT/PROT_READ|WRITE, so
+  // Read/Scan work even with no write permission on the directory at all
+  // (e.g. a read-only NFS export) - unlike Frozen(), which is a flag
+  // persisted in rigel.meta, this is local to the handle that asked for it.
+  {
+    const char* ro_dir = "/tmp/rigel_test_readonly";
+    ::mkdir(ro_dir, 0755);
+    check(rigel::Rigel::WriteMeta(ro_dir, "ro", 8, 4), "WriteMeta succeeds");
+
+    unsigned char wbuf[8], rbuf[8];
+    std::memset(wbuf, 'R', 8);
+    {
+      rigel::Rigel writer;
+      check(writer.Init(ro_dir), "Init(dirname) succeeds for the writer handle");
+      check(writer.Write(0, wbuf, 8) == 8, "Write succeeds via the non-read-only handle");
+    }
+
+    rigel::Rigel reader;
+    check(reader.Init(ro_dir, /*read_only=*/true), "Init(dirname, read_only=true) succeeds");
+    check(reader.ReadOnly(), "ReadOnly() is true");
+    check(reader.Read(0, rbuf, 8) == 8 && std::memcmp(wbuf, rbuf, 8) == 0,
+          "Read on a read_only handle returns what a prior writer wrote");
+    check(reader.Write(1, wbuf, 8) == -1, "Write fails on a read_only handle");
+    check(std::strstr(reader.LastError(), "read-only") != NULL,
+          "LastError names read-only as the reason a read_only Write failed");
+    check(!reader.Delete(0), "Delete fails on a read_only handle");
+    check(reader.ScanInit() && reader.ScanNext() == 0, "ScanInit/ScanNext work on a read_only handle");
+
+    // chmod the directory itself read-only (no write bit) to prove this
+    // isn't just "the fd happens to be opened O_RDONLY" but that the
+    // implementation genuinely never needs write access to work.
+    ::chmod(ro_dir, 0555);
+    rigel::Rigel chmod_reader;
+    bool chmod_ok = chmod_reader.Init(ro_dir, /*read_only=*/true) &&
+                    chmod_reader.Read(0, rbuf, 8) == 8;
+    ::chmod(ro_dir, 0755); // restore before any cleanup that might need to write here
+    check(chmod_ok, "Read works against a directory with no write permission at all");
+
+    // A fresh, never-written directory (no index file yet): a read_only
+    // handle must not try to create one - Read degrades to a normal miss.
+    const char* ro_empty_dir = "/tmp/rigel_test_readonly_empty";
+    ::mkdir(ro_empty_dir, 0755);
+    rigel::Rigel empty_reader;
+    empty_reader.Init(ro_empty_dir, "roempty", 8, 4, 0, /*read_only=*/true);
+    check(empty_reader.Read(0, rbuf, 8) == -1,
+          "Read on a read_only handle misses cleanly when the index file doesn't exist yet");
+  }
+
   // SetFrozen() must not clobber hand-added '#' comments in rigel.meta -
   // it used to go through WriteMeta(), which regenerates the whole file
   // and silently dropped them.

@@ -1,9 +1,10 @@
 /**
  * Functional test for the `rigel` CLI binary (src/rigel_cli.cc), invoked as
- * a subprocess exactly as a real user would run it. Focused on `dump`,
- * which has logic (hex-encoding, start/end filtering, --raw) that lives
- * only in the CLI and isn't exercised by tests/test.cc (library-level) or
- * tests/test_c.c (C bindings).
+ * a subprocess exactly as a real user would run it. Covers logic that
+ * lives only in the CLI and isn't exercised by tests/test.cc (library-
+ * level) or tests/test_c.c (C bindings): `dump`'s hex-encoding/start-end
+ * filtering/--raw, and --read-only actually needing no write access to
+ * the underlying files (not just accepting the flag).
  *
  * RIGEL_CLI_PATH is the built rigel_cli binary's absolute path, injected by
  * CMakeLists.txt via $<TARGET_FILE:rigel_cli> so this test doesn't depend
@@ -109,6 +110,37 @@ int main() {
     unsigned char raw_expected[12] = {'a', 'b', 0, 0, 'c', 'd', 0, 0, 'e', 'f', 0, 0};
     std::string raw_expected_str(reinterpret_cast<char*>(raw_expected), sizeof(raw_expected));
     check(out == raw_expected_str, "dump --raw emits concatenated raw block bytes");
+  }
+
+  // --read-only: chmod the shard/index files themselves (not just the
+  // directory - opening an already-existing file only needs permission on
+  // the file, not on the directory it lives in) to prove this flag lets
+  // read/scan/dump/stat work with genuinely no write access, e.g. a
+  // read-only NFS export.
+  {
+    RunShellBestEffort("chmod 0444 " + dir + "/testkey.0000 " + dir + "/testkey.index");
+
+    std::string without_flag = RunCapture(cli + " read " + dir + " 5 2>&1");
+    check(without_flag.find("ab") == std::string::npos,
+          "read without --read-only fails against files with no write permission");
+
+    std::string with_flag = RunCapture(cli + " read " + dir + " 5 --read-only");
+    unsigned char expected[4] = {'a', 'b', 0, 0}; // Read returns the full zero-padded block
+    check(with_flag == std::string(reinterpret_cast<char*>(expected), sizeof(expected)),
+          "read --read-only succeeds against files with no write permission");
+
+    check(RunCapture(cli + " scan " + dir + " --read-only") == "5\n7\n10\n",
+          "scan --read-only succeeds against files with no write permission");
+
+    check(RunCapture(cli + " dump " + dir + " --read-only") ==
+              "5: 61620000\n7: 63640000\n10: 65660000\n",
+          "dump --read-only succeeds against files with no write permission");
+
+    check(RunCapture(cli + " stat " + dir + " --read-only").find("records:         3") !=
+              std::string::npos,
+          "stat --read-only succeeds against files with no write permission");
+
+    RunShellBestEffort("chmod 0644 " + dir + "/testkey.0000 " + dir + "/testkey.index");
   }
 
   RunShellBestEffort("rm -rf " + dir);

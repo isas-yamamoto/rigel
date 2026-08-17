@@ -19,12 +19,13 @@ void rigel_c_destroy(RigelHandle* h) {
 }
 
 void rigel_c_init(RigelHandle* h, const char* dirname, const char* key,
-                   int block_size, int max_file_count, int index_offset) {
-  h->impl.Init(dirname, key, block_size, max_file_count, index_offset);
+                   int block_size, int max_file_count, int index_offset,
+                   int read_only) {
+  h->impl.Init(dirname, key, block_size, max_file_count, index_offset, read_only != 0);
 }
 
-int rigel_c_init_from_meta(RigelHandle* h, const char* dirname) {
-  return h->impl.Init(dirname) ? 1 : 0;
+int rigel_c_init_from_meta(RigelHandle* h, const char* dirname, int read_only) {
+  return h->impl.Init(dirname, read_only != 0) ? 1 : 0;
 }
 
 int rigel_c_write_meta(const char* dirname, const char* key,
@@ -74,6 +75,10 @@ int rigel_c_index_offset(const RigelHandle* h) {
 
 int rigel_c_frozen(const RigelHandle* h) {
   return h->impl.Frozen() ? 1 : 0;
+}
+
+int rigel_c_read_only(const RigelHandle* h) {
+  return h->impl.ReadOnly() ? 1 : 0;
 }
 
 int rigel_c_set_frozen(const char* dirname, int frozen) {
