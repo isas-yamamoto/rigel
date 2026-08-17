@@ -139,6 +139,29 @@ int main() {
           "Init(dirname) fails when metadata is missing");
   }
 
+  // A key containing a path separator (e.g. from a hand-planted or
+  // adversarial rigel.meta) must be rejected, not used to build paths -
+  // otherwise "key=../../etc/passwd" could write/read outside dirname.
+  {
+    check(!rigel::Rigel::WriteMeta("/tmp/rigel_test_traversal", "../evil", 64, 2),
+          "WriteMeta rejects a key containing '/'");
+    check(!rigel::Rigel::WriteMeta("/tmp/rigel_test_traversal", "", 64, 2),
+          "WriteMeta rejects an empty key");
+
+    const char* traversal_dir = "/tmp/rigel_test_traversal";
+    ::mkdir(traversal_dir, 0755);
+    FILE* f = std::fopen("/tmp/rigel_test_traversal/rigel.meta", "w");
+    if (f != NULL) {
+      std::fprintf(f, "key=../../../../tmp/rigel_test_traversal_escaped\n");
+      std::fprintf(f, "block_size=64\n");
+      std::fprintf(f, "max_file_count=2\n");
+      std::fclose(f);
+    }
+    rigel::Rigel r5;
+    check(!r5.Init(traversal_dir),
+          "Init(dirname) rejects a hand-planted rigel.meta with a traversal key");
+  }
+
   // LastError(): not set for a normal failure (reading an unwritten index),
   // but populated with a specific reason after misuse (out-of-range index).
   {

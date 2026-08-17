@@ -206,6 +206,23 @@ Besides `rigel.meta`, `dirname` ends up containing data files named
 - The `rigel` CLI prints `rigel <subcommand>: <LastError()>` to stderr
   when a call fails - see `rigel_cli.cc` for a usage example.
 
+## Security
+
+- `key` is interpolated directly into filesystem paths (`dirname/key.NNNN`,
+  `dirname/key.index`) with no other escaping, so it's restricted to
+  `[A-Za-z0-9_.-]+` (non-empty, no `/`) by both `WriteMeta()` and
+  `Init(dirname)`'s `rigel.meta` parser. Without a path separator allowed
+  in `key`, the path it builds can never escape `dirname` via `../`
+  traversal, regardless of whether `key` came from a trusted caller or
+  from a `rigel.meta` file - which, unlike a `key` passed directly to
+  `Init(dirname, key, ...)`, could in principle be planted or edited by
+  anyone with write access to that directory, independent of who's
+  actually running `rigel`/calling `Init(dirname)` on it.
+- This check does not apply to `dirname` itself, or to `key` when passed
+  directly to `Init(dirname, key, block_size, max_file_count)` - both are
+  treated as trusted input supplied by the calling code, the same as any
+  other argument or hardcoded value in a trusted program.
+
 ## Limitations
 
 - Neither `Read` nor `Write` calls fsync/msync. Durability stops at the

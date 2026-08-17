@@ -31,6 +31,29 @@ const char META_FILENAME[] = "rigel.meta";
 // the cost is that a shard evicted and then touched again has to be
 // reopened (one extra open+ftruncate+mmap, same as a first touch).
 const size_t MAX_OPEN_SHARDS = 1024;
+
+// key_ is interpolated directly into filesystem paths (DataFilename,
+// IndexFilename: "dirname/key.NNNN", "dirname/key.index") with no other
+// escaping. Restricting it to this allow-list - notably excluding '/' -
+// guarantees the "key" portion can only ever be a single path component,
+// so a key can never escape dirname via "../" traversal regardless of
+// where it came from (a rigel.meta file is just as capable of holding an
+// adversarial key as any other input, since it can be planted by anyone
+// with write access to the directory, independent of whether dirname/the
+// rest of the call came from a trusted caller).
+bool IsValidKey(const char* key) {
+  if (key[0] == '\0') {
+    return false;
+  }
+  for (const char* p = key; *p != '\0'; ++p) {
+    bool ok = (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+              (*p >= '0' && *p <= '9') || *p == '_' || *p == '-' || *p == '.';
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
 }
 
 /**
@@ -131,7 +154,7 @@ bool Rigel::Init(const char* dirname) {
   }
   std::fclose(f);
 
-  if (key[0] == '\0' || block_size <= 0 || max_file_count <= 0) {
+  if (!IsValidKey(key) || block_size <= 0 || max_file_count <= 0) {
     this->SetError("Init: invalid metadata in %s", filename);
     return false;
   }
@@ -149,6 +172,14 @@ bool Rigel::WriteMeta(const char* dirname,
                       const char* key,
                       const int block_size,
                       const int max_file_count) {
+  if (!IsValidKey(key)) {
+    std::fprintf(stderr,
+                  "Rigel::WriteMeta: invalid key \"%s\" (must be non-empty and contain only "
+                  "letters, digits, '.', '_', '-')\n",
+                  key);
+    return false;
+  }
+
   char filename[MAXPATHLEN + 32];
   std::snprintf(filename, sizeof(filename), "%s/%s", dirname, META_FILENAME);
 
