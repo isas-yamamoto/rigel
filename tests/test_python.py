@@ -69,18 +69,32 @@ def main():
     with rigel.Rigel(off_dir) as r2:
         check(r2.read(1001) == b"Y" * 8, "reopening the directory reads back prior writes")
 
-    # read_only: chmod the shard/index files themselves (not just the
-    # directory - opening an already-existing file only needs permission on
-    # the file, not on its containing directory) to prove this actually
-    # needs no write access, e.g. against a read-only NFS export.
+    # read_only, and auto-detected read-only: chmod the shard/index files
+    # themselves (not just the directory - opening an already-existing
+    # file only needs permission on the file, not on its containing
+    # directory) to prove this - and the automatic EACCES/EROFS fallback
+    # that makes it unnecessary for plain reads - actually need no write
+    # access, e.g. against a read-only NFS export.
     shard_path = os.path.join(off_dir, "py.0000")
     index_path = os.path.join(off_dir, "py.index")
     os.chmod(shard_path, 0o444)
     os.chmod(index_path, 0o444)
     try:
         with rigel.Rigel(off_dir) as r3:
-            check(r3.read(1001) is None,
-                  "read without read_only fails against files with no write permission")
+            check(not r3.read_only, "read_only is False before the first read attempt")
+            check(r3.read(1001) == b"Y" * 8,
+                  "read without read_only still succeeds (auto-detected fallback)")
+            check(r3.read_only, "read_only is True after the fallback triggered")
+            check(r3.write(1001, b"Z" * 8) == -1, "write fails after auto-detected read_only")
+
+        # write() called first (no prior read) must not trigger the
+        # fallback - it should fail with a plain permission error instead
+        # of silently switching modes and then crashing on a PROT_READ
+        # mapping.
+        with rigel.Rigel(off_dir) as r4:
+            check(r4.write(1001, b"Z" * 8) == -1,
+                  "write called first (no prior read) still fails, not falls back")
+            check(not r4.read_only, "read_only stays False - write never auto-detects")
 
         with rigel.Rigel(off_dir, read_only=True) as rro:
             check(rro.read_only, "read_only reads back True")

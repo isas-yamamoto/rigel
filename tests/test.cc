@@ -360,6 +360,60 @@ int main() {
           "Read on a read_only handle misses cleanly when the index file doesn't exist yet");
   }
 
+  // Auto-detected read-only: a handle opened *without* read_only=true still
+  // falls back to a read-only open (and permanently flips ReadOnly() to
+  // true) the moment it hits EACCES/EROFS on a Read/ScanInit-driven open -
+  // so a caller doesn't have to know in advance that a directory turned
+  // out to be write-restricted (e.g. remounted read-only under it).
+  {
+    const char* auto_dir = "/tmp/rigel_test_readonly_auto";
+    ::mkdir(auto_dir, 0755);
+    check(rigel::Rigel::WriteMeta(auto_dir, "auto", 8, 4), "WriteMeta succeeds");
+
+    unsigned char wbuf[8], rbuf[8];
+    std::memset(wbuf, 'A', 8);
+    {
+      rigel::Rigel writer;
+      check(writer.Init(auto_dir), "Init(dirname) succeeds for the writer handle");
+      check(writer.Write(0, wbuf, 8) == 8, "Write succeeds before chmod'ing the files read-only");
+    }
+
+    char shard_path[MAXPATHLEN + 32], index_path[MAXPATHLEN + 32];
+    std::snprintf(shard_path, sizeof(shard_path), "%s/auto.0000", auto_dir);
+    std::snprintf(index_path, sizeof(index_path), "%s/auto.index", auto_dir);
+    ::chmod(shard_path, 0444);
+    ::chmod(index_path, 0444);
+
+    rigel::Rigel auto_reader;
+    check(auto_reader.Init(auto_dir), "Init(dirname) succeeds (read_only left at its default false)");
+    check(!auto_reader.ReadOnly(), "ReadOnly() is false before the first Read attempt");
+    check(auto_reader.Read(0, rbuf, 8) == 8 && std::memcmp(wbuf, rbuf, 8) == 0,
+          "Read succeeds anyway via the automatic EACCES fallback");
+    check(auto_reader.ReadOnly(), "ReadOnly() is true after the fallback triggered");
+
+    // Write must fail cleanly through the ordinary read_only_ guard at its
+    // own entry (checked before this handle ever touches a shard/index
+    // fd), not by trying to write through the PROT_READ mapping the
+    // fallback above just created.
+    check(auto_reader.Write(1, wbuf, 8) == -1, "Write fails after auto-detected read_only");
+    check(std::strstr(auto_reader.LastError(), "read-only") != NULL,
+          "LastError names read-only as the reason, from the auto-detected state");
+
+    // Write() itself must never trigger the fallback: called first (no
+    // prior Read), it should fail with a plain permission error and leave
+    // ReadOnly() false, rather than silently switching modes and then
+    // segfaulting trying to write into a PROT_READ mapping.
+    rigel::Rigel writer_first;
+    check(writer_first.Init(auto_dir), "Init(dirname) succeeds for a second, fresh handle");
+    check(writer_first.Write(1, wbuf, 8) == -1,
+          "Write called first (no prior Read) still fails, not falls back");
+    check(!writer_first.ReadOnly(),
+          "ReadOnly() stays false - Write never auto-detects, it just fails");
+
+    ::chmod(shard_path, 0644);
+    ::chmod(index_path, 0644);
+  }
+
   // SetFrozen() must not clobber hand-added '#' comments in rigel.meta -
   // it used to go through WriteMeta(), which regenerates the whole file
   // and silently dropped them.

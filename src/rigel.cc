@@ -153,6 +153,37 @@ void Rigel::IndexFilename(char* buf, size_t buflen) const {
 }
 
 /**
+ *  @brief Opens filename, honoring/upgrading read_only_.
+ *
+ *  If this handle is already read_only_, opens O_RDONLY. Otherwise tries
+ *  create_flags (normally O_RDWR|O_CREAT) first; if that fails with
+ *  EACCES/EROFS (no write access to this file) and allow_read_only_fallback
+ *  is true, it retries O_RDONLY and permanently switches this handle to
+ *  read_only_ - so Read/ScanInit against a write-restricted directory (e.g.
+ *  a read-only NFS export) work without the caller having to pass
+ *  read_only explicitly to Init(). Write/Delete pass false: they're about
+ *  to write through the mapping/pointer this fd backs, so silently
+ *  downgrading to a PROT_READ mapping mid-call would crash rather than
+ *  fail cleanly.
+ *
+ *  @return the fd on success. -1 on failure, with errno set from the final
+ *  open() attempt (the caller decides how to report it - e.g.
+ *  OpenIndexMapping treats a read_only ENOENT as "nothing written yet").
+ */
+int Rigel::OpenMaybeReadOnly(const char* filename, int create_flags,
+                            bool allow_read_only_fallback) {
+  if (this->read_only_) {
+    return ::open(filename, O_RDONLY, 0644);
+  }
+  int fd = ::open(filename, create_flags, 0644);
+  if (fd >= 0 || !allow_read_only_fallback || (errno != EACCES && errno != EROFS)) {
+    return fd;
+  }
+  this->read_only_ = true; // auto-detected: no write access to this file
+  return ::open(filename, O_RDONLY, 0644);
+}
+
+/**
  *  @brief Returns the mmap'd data file corresponding to file_index.
  *
  *  A single data file's size is fixed at max_file_size_, so once created it
@@ -160,7 +191,7 @@ void Rigel::IndexFilename(char* buf, size_t buflen) const {
  *
  *  @return a pointer to the mapping on success, nullptr on failure.
  */
-Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
+Rigel::DataMapping* Rigel::GetDataMapping(int file_index, bool allow_read_only_fallback) {
   std::unordered_map<int, DataMapping>::iterator it = this->data_maps_.find(file_index);
   if (it != this->data_maps_.end()) {
     this->TouchShard(file_index);
@@ -170,7 +201,7 @@ Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
   char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
   this->DataFilename(file_index, filename, sizeof(filename));
 
-  int fd = ::open(filename, this->read_only_ ? O_RDONLY : (O_RDWR | O_CREAT), 0644);
+  int fd = this->OpenMaybeReadOnly(filename, O_RDWR | O_CREAT, allow_read_only_fallback);
   if (fd < 0) {
     this->SetError("open(%s) failed: %s", filename, std::strerror(errno));
     return NULL;
@@ -261,11 +292,12 @@ void Rigel::EvictShardsIfNeeded() {
  *  @brief Opens the index file if it isn't open yet.
  *
  *  If another process has already written to the index, maps it at that
- *  file's existing size right away.
+ *  file's existing size right away. See GetDataMapping()/
+ *  OpenMaybeReadOnly() for what allow_read_only_fallback does.
  *
  *  @return true on success.
  */
-bool Rigel::OpenIndexMapping() {
+bool Rigel::OpenIndexMapping(bool allow_read_only_fallback) {
   if (this->index_map_.fd >= 0) {
     return true;
   }
@@ -273,7 +305,7 @@ bool Rigel::OpenIndexMapping() {
   char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
   this->IndexFilename(filename, sizeof(filename));
 
-  int fd = ::open(filename, this->read_only_ ? O_RDONLY : (O_RDWR | O_CREAT), 0644);
+  int fd = this->OpenMaybeReadOnly(filename, O_RDWR | O_CREAT, allow_read_only_fallback);
   if (fd < 0) {
     if (this->read_only_ && errno == ENOENT) {
       // Nothing has ever been written under a read_only handle that can't
@@ -399,7 +431,7 @@ ssize_t Rigel::Write(const int index,
     return -1;
   }
 
-  DataMapping* dm = this->GetDataMapping(file_index);
+  DataMapping* dm = this->GetDataMapping(file_index, /*allow_read_only_fallback=*/false);
   if (dm == NULL) {
     return -1;
   }
@@ -413,7 +445,7 @@ ssize_t Rigel::Write(const int index,
     std::memset(dm->ptr + file_offset + size, 0, this->block_size_ - size);
   }
 
-  if (!this->OpenIndexMapping()) {
+  if (!this->OpenIndexMapping(/*allow_read_only_fallback=*/false)) {
     return -1;
   }
   if (!this->EnsureIndexSize((size_t)idx + 1)) {
@@ -451,7 +483,7 @@ bool Rigel::Delete(const int index) {
 
   int idx = index - this->index_offset_;
 
-  if (!this->OpenIndexMapping()) {
+  if (!this->OpenIndexMapping(/*allow_read_only_fallback=*/false)) {
     return false;
   }
   if (idx < 0 || (size_t)idx >= this->index_map_.size ||
@@ -463,7 +495,7 @@ bool Rigel::Delete(const int index) {
   int file_index  = offset / this->max_file_size_;
   int file_offset = offset % this->max_file_size_;
 
-  DataMapping* dm = this->GetDataMapping(file_index);
+  DataMapping* dm = this->GetDataMapping(file_index, /*allow_read_only_fallback=*/false);
   if (dm == NULL) {
     return false;
   }
@@ -509,7 +541,7 @@ ssize_t Rigel::Read(const int index,
     return -1;
   }
 
-  if (!this->OpenIndexMapping()) {
+  if (!this->OpenIndexMapping(/*allow_read_only_fallback=*/true)) {
     return -1;
   }
   if ((size_t)idx >= this->index_map_.size) {
@@ -519,7 +551,7 @@ ssize_t Rigel::Read(const int index,
     return -1;
   }
 
-  DataMapping* dm = this->GetDataMapping(file_index);
+  DataMapping* dm = this->GetDataMapping(file_index, /*allow_read_only_fallback=*/true);
   if (dm == NULL) {
     return -1;
   }
@@ -538,7 +570,7 @@ ssize_t Rigel::Read(const int index,
 bool Rigel::ScanInit(const int start) {
   std::lock_guard<std::mutex> lock(this->mutex_);
 
-  if (!this->OpenIndexMapping()) {
+  if (!this->OpenIndexMapping(/*allow_read_only_fallback=*/true)) {
     return false;
   }
   int internal_start = start - this->index_offset_;

@@ -137,6 +137,32 @@ a fresh index/shard file that doesn't exist yet is treated as "nothing
 written" rather than an error (since a read-only handle can't create
 one either way).
 
+Passing `--read-only`/`read_only` up front is optional: `read`/`scan`
+(and anything built on them, like `dump`/`stat`) auto-detect it too - if
+the normal open fails with `EACCES`/`EROFS` (no write access to that
+file), they transparently retry `O_RDONLY` and switch the whole handle
+to read-only from then on, so a plain `rigel read` already works against
+a read-only-mounted directory with no flag needed. `write`/`delete`
+never do this auto-detection themselves (they'd otherwise have to write
+through a mapping/pointer that a fallback had just made `PROT_READ`);
+they simply fail with a permission error, same as always. Explicit
+`--read-only` still matters when you want writes refused outright rather
+than only discovered on the first failed one, or want the intent
+documented at the call site.
+
+When this auto-detection kicks in without an explicit `--read-only`, the
+CLI prints a one-line notice to stderr - the same idea as `mount`
+reporting "read-only filesystem" when a requested rw mount downgrades on
+its own - so it's noticed rather than silently changing behavior:
+
+```
+rigel read: note: /path/to/data opened read-only (no write access)
+```
+
+(The library itself stays silent either way, per "Error handling &
+logging conventions" below - `Rigel::ReadOnly()`/`rigel_c_read_only()`/
+`.read_only` let any caller check and report it themselves if they want.)
+
 From code, the only thing needed is `Init(dirname)`:
 
 ```cpp

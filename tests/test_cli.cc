@@ -3,8 +3,9 @@
  * a subprocess exactly as a real user would run it. Covers logic that
  * lives only in the CLI and isn't exercised by tests/test.cc (library-
  * level) or tests/test_c.c (C bindings): `dump`'s hex-encoding/start-end
- * filtering/--raw, and --read-only actually needing no write access to
- * the underlying files (not just accepting the flag).
+ * filtering/--raw, and --read-only (plus its automatic EACCES/EROFS
+ * fallback for plain reads) actually needing no write access to the
+ * underlying files, not just accepting the flag.
  *
  * RIGEL_CLI_PATH is the built rigel_cli binary's absolute path, injected by
  * CMakeLists.txt via $<TARGET_FILE:rigel_cli> so this test doesn't depend
@@ -112,22 +113,41 @@ int main() {
     check(out == raw_expected_str, "dump --raw emits concatenated raw block bytes");
   }
 
-  // --read-only: chmod the shard/index files themselves (not just the
-  // directory - opening an already-existing file only needs permission on
-  // the file, not on the directory it lives in) to prove this flag lets
-  // read/scan/dump/stat work with genuinely no write access, e.g. a
-  // read-only NFS export.
+  // --read-only, and auto-detected read-only: chmod the shard/index files
+  // themselves (not just the directory - opening an already-existing file
+  // only needs permission on the file, not on the directory it lives in)
+  // to prove this flag - and the automatic EACCES/EROFS fallback that
+  // makes it unnecessary for plain reads - let read/scan/dump/stat work
+  // with genuinely no write access, e.g. a read-only NFS export.
   {
     RunShellBestEffort("chmod 0444 " + dir + "/testkey.0000 " + dir + "/testkey.index");
 
-    std::string without_flag = RunCapture(cli + " read " + dir + " 5 2>&1");
-    check(without_flag.find("ab") == std::string::npos,
-          "read without --read-only fails against files with no write permission");
+    unsigned char expected[4] = {'a', 'b', 0, 0}; // Read returns the full zero-padded block
+    std::string expected_str(reinterpret_cast<char*>(expected), sizeof(expected));
+
+    std::string without_flag = RunCapture(cli + " read " + dir + " 5");
+    check(without_flag == expected_str,
+          "read without --read-only still succeeds (auto-detected fallback)");
+
+    // The auto-detect note (like `mount`'s "read-only filesystem" message)
+    // must appear on stderr when the fallback triggers without an
+    // explicit --read-only, and must not appear when the caller already
+    // asked for it (that's not a surprise worth reporting).
+    std::string note_no_flag = RunCapture(cli + " read " + dir + " 5 2>&1 1>/dev/null");
+    check(note_no_flag.find("note:") != std::string::npos &&
+              note_no_flag.find(dir) != std::string::npos,
+          "read without --read-only prints an auto-detected-read-only note to stderr");
 
     std::string with_flag = RunCapture(cli + " read " + dir + " 5 --read-only");
-    unsigned char expected[4] = {'a', 'b', 0, 0}; // Read returns the full zero-padded block
-    check(with_flag == std::string(reinterpret_cast<char*>(expected), sizeof(expected)),
+    check(with_flag == expected_str,
           "read --read-only succeeds against files with no write permission");
+
+    std::string note_with_flag = RunCapture(cli + " read " + dir + " 5 --read-only 2>&1 1>/dev/null");
+    check(note_with_flag.empty(),
+          "read --read-only (explicit) prints no note - the caller already knows");
+
+    check(!RunWithStdin(cli + " write " + dir + " 5", "zz"),
+          "write still fails cleanly (not a crash) against files with no write permission");
 
     check(RunCapture(cli + " scan " + dir + " --read-only") == "5\n7\n10\n",
           "scan --read-only succeeds against files with no write permission");

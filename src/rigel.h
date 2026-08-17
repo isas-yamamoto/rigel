@@ -212,11 +212,26 @@ namespace rigel {
     // which have already locked it).
     void SetError(const char* fmt, ...);
 
-    DataMapping* GetDataMapping(int file_index);
+    // allow_read_only_fallback lets Read/ScanInit auto-detect a
+    // write-restricted file (open fails EACCES/EROFS) by retrying
+    // O_RDONLY and switching this whole handle to read_only_ from then
+    // on - see OpenMaybeReadOnly(). Write/Delete always pass false: they
+    // are about to write through the mapping/pointer this call backs, so
+    // silently downgrading to a PROT_READ mapping mid-call would crash
+    // instead of failing cleanly.
+    DataMapping* GetDataMapping(int file_index, bool allow_read_only_fallback);
     void TouchShard(int file_index);
     void EvictShardsIfNeeded();
-    bool OpenIndexMapping();
+    bool OpenIndexMapping(bool allow_read_only_fallback);
     bool EnsureIndexSize(size_t min_size);
+
+    // Shared open() logic for GetDataMapping/OpenIndexMapping - see the
+    // allow_read_only_fallback note above. Returns the fd, or -1 with
+    // errno set from the final open() attempt (callers may need to
+    // inspect it themselves, e.g. OpenIndexMapping treats a read_only
+    // ENOENT as "nothing written yet" rather than an error).
+    int OpenMaybeReadOnly(const char* filename, int create_flags,
+                          bool allow_read_only_fallback);
 
     Rigel(const Rigel&) = delete;
     Rigel& operator=(const Rigel&) = delete;

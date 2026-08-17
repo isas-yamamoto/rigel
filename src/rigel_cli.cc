@@ -73,6 +73,21 @@ std::vector<char*> StripFlag(int argc, char** argv, const char* flag, bool* foun
   return out;
 }
 
+// Read/ScanInit auto-detect a write-restricted directory (EACCES/EROFS)
+// and fall back to a read-only handle on their own - see
+// Rigel::OpenMaybeReadOnly(). Surface that the same way `mount` reports
+// "read-only filesystem" when a requested rw mount downgrades on its own,
+// so a caller who didn't pass --read-only still notices the switch rather
+// than silently getting read-only behavior. Only fires when the caller
+// didn't already ask for --read-only explicitly (that's not a surprise).
+void NoteIfAutoReadOnly(const rigel::Rigel& rigel, bool explicit_read_only,
+                        const char* subcommand, const char* dirname) {
+  if (!explicit_read_only && rigel.ReadOnly()) {
+    std::fprintf(stderr, "rigel %s: note: %s opened read-only (no write access)\n",
+                 subcommand, dirname);
+  }
+}
+
 int CmdVersion(int, char**) {
   std::printf("rigel %s\n", rigel::VERSION);
   return 0;
@@ -135,6 +150,7 @@ int CmdRead(int argc, char** argv) {
 
   std::vector<unsigned char> buf(rigel.BlockSize());
   ssize_t n = rigel.Read(index, buf.data(), buf.size());
+  NoteIfAutoReadOnly(rigel, read_only, "read", dirname);
   if (n < 0) {
     std::fprintf(stderr, "rigel read: index %d not found\n", index);
     return 1;
@@ -213,6 +229,7 @@ int CmdScan(int argc, char** argv) {
     std::fprintf(stderr, "rigel scan: %s\n", rigel.LastError());
     return 1;
   }
+  NoteIfAutoReadOnly(rigel, read_only, "scan", dirname);
   int idx;
   while ((idx = rigel.ScanNext()) >= 0) {
     std::printf("%d\n", idx);
@@ -246,6 +263,7 @@ int CmdDump(int argc, char** argv) {
     std::fprintf(stderr, "rigel dump: %s\n", rigel.LastError());
     return 1;
   }
+  NoteIfAutoReadOnly(rigel, read_only, "dump", dirname);
 
   std::vector<unsigned char> buf(rigel.BlockSize());
   std::vector<char> hex(buf.size() * 2 + 1);
@@ -295,6 +313,7 @@ int CmdStat(int argc, char** argv) {
     std::fprintf(stderr, "rigel stat: %s\n", rigel.LastError());
     return 1;
   }
+  NoteIfAutoReadOnly(rigel, read_only, "stat", dirname);
 
   std::printf("key:             %s\n", rigel.Key());
   std::printf("block_size:      %d\n", st.block_size);
