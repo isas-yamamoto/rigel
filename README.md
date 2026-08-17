@@ -105,14 +105,21 @@ doxygen docs/doxygen.conf   # writes docs/html and docs/latex
 First, initialize the directory with `rigel init` (once):
 
 ```sh
-rigel init /path/to/data mykey 1024 131072   # dirname key block_size max_file_count
+rigel init /path/to/data mykey 1024 131072 1000   # dirname key block_size max_file_count index_offset
 ```
 
-This writes key/block_size/max_file_count into
+This writes key/block_size/max_file_count/index_offset into
 `/path/to/data/rigel.meta`. It refuses to run against a directory that
 already has metadata (since that would corrupt existing data).
 block_size/max_file_count default to `BLOCK_SIZE`=1024 and
-`MAX_FILE_COUNT`=131072 if omitted.
+`MAX_FILE_COUNT`=131072 if omitted; index_offset defaults to 0.
+
+`index_offset` shifts the externally visible index space: with
+`index_offset=1000`, index `1000` is the first record (internally
+stored at position 0), and indices below `1000` are rejected. It's
+stored in `rigel.meta` precisely so every tool/process touching the
+same directory agrees on what index N means without each one
+separately hard-coding or passing around the same shift.
 
 The `rigel` command doubles as a quick way to poke at a directory from
 the shell:

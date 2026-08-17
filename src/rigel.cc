@@ -63,6 +63,7 @@ bool IsValidKey(const char* key) {
 Rigel::Rigel()
   : block_size_(0),
     max_file_size_(0),
+    index_offset_(0),
     scan_pos_(0) {
   this->dirname_[0] = '\0';
   this->key_[0] = '\0';
@@ -103,9 +104,11 @@ Rigel::~Rigel() {
 void Rigel::Init(const char* dirname,
                  const char* key,
                  const int block_size,
-                 const int max_file_count) {
+                 const int max_file_count,
+                 const int index_offset) {
   this->block_size_ = block_size;
   this->max_file_size_ = (unsigned long long)max_file_count * block_size;
+  this->index_offset_ = index_offset;
 
   std::strncpy(this->dirname_, dirname, MAXPATHLEN-1);
   this->dirname_[MAXPATHLEN-1] = '\0';
@@ -136,6 +139,7 @@ bool Rigel::Init(const char* dirname) {
   key[0] = '\0';
   int block_size = BLOCK_SIZE;
   int max_file_count = MAX_FILE_COUNT;
+  int index_offset = 0; // absent in metadata predating this field
 
   char line[512];
   while (std::fgets(line, sizeof(line), f) != NULL) {
@@ -149,6 +153,8 @@ bool Rigel::Init(const char* dirname) {
         block_size = std::atoi(value);
       } else if (std::strcmp(name, "max_file_count") == 0) {
         max_file_count = std::atoi(value);
+      } else if (std::strcmp(name, "index_offset") == 0) {
+        index_offset = std::atoi(value);
       }
     }
   }
@@ -159,7 +165,7 @@ bool Rigel::Init(const char* dirname) {
     return false;
   }
 
-  this->Init(dirname, key, block_size, max_file_count);
+  this->Init(dirname, key, block_size, max_file_count, index_offset);
   return true;
 }
 
@@ -171,7 +177,8 @@ bool Rigel::Init(const char* dirname) {
 bool Rigel::WriteMeta(const char* dirname,
                       const char* key,
                       const int block_size,
-                      const int max_file_count) {
+                      const int max_file_count,
+                      const int index_offset) {
   if (!IsValidKey(key)) {
     std::fprintf(stderr,
                   "Rigel::WriteMeta: invalid key \"%s\" (must be non-empty and contain only "
@@ -194,6 +201,7 @@ bool Rigel::WriteMeta(const char* dirname,
   std::fprintf(f, "key=%s\n", key);
   std::fprintf(f, "block_size=%d\n", block_size);
   std::fprintf(f, "max_file_count=%d\n", max_file_count);
+  std::fprintf(f, "index_offset=%d\n", index_offset);
   std::fclose(f);
   return true;
 }
@@ -413,7 +421,13 @@ ssize_t Rigel::Write(const int index,
                      size_t size) {
   std::lock_guard<std::mutex> lock(this->mutex_);
 
-  unsigned long long offset = (unsigned long long)index * this->block_size_;
+  int idx = index - this->index_offset_;
+  if (idx < 0) {
+    this->SetError("Write: index %d is below index_offset %d", index, this->index_offset_);
+    return -1;
+  }
+
+  unsigned long long offset = (unsigned long long)idx * this->block_size_;
   int file_index  = offset / this->max_file_size_;
   int file_offset = offset % this->max_file_size_;
 
@@ -440,10 +454,10 @@ ssize_t Rigel::Write(const int index,
   if (!this->OpenIndexMapping()) {
     return -1;
   }
-  if (!this->EnsureIndexSize((size_t)index + 1)) {
+  if (!this->EnsureIndexSize((size_t)idx + 1)) {
     return -1;
   }
-  this->index_map_.ptr[index] = 1;
+  this->index_map_.ptr[idx] = 1;
 
   return (ssize_t)size;
 }
@@ -458,15 +472,17 @@ ssize_t Rigel::Write(const int index,
 bool Rigel::Delete(const int index) {
   std::lock_guard<std::mutex> lock(this->mutex_);
 
+  int idx = index - this->index_offset_;
+
   if (!this->OpenIndexMapping()) {
     return false;
   }
-  if (index < 0 || (size_t)index >= this->index_map_.size ||
-      this->index_map_.ptr[index] != 1) {
+  if (idx < 0 || (size_t)idx >= this->index_map_.size ||
+      this->index_map_.ptr[idx] != 1) {
     return true; // never written; nothing to do
   }
 
-  unsigned long long offset = (unsigned long long)index * this->block_size_;
+  unsigned long long offset = (unsigned long long)idx * this->block_size_;
   int file_index  = offset / this->max_file_size_;
   int file_offset = offset % this->max_file_size_;
 
@@ -476,7 +492,7 @@ bool Rigel::Delete(const int index) {
   }
   std::memset(dm->ptr + file_offset, 0, this->block_size_);
 
-  this->index_map_.ptr[index] = 0;
+  this->index_map_.ptr[idx] = 0;
   return true;
 }
 
@@ -494,7 +510,12 @@ ssize_t Rigel::Read(const int index,
                     size_t size) {
   std::lock_guard<std::mutex> lock(this->mutex_);
 
-  unsigned long long offset = (unsigned long long)index * this->block_size_;
+  int idx = index - this->index_offset_;
+  if (idx < 0) {
+    return -1; // below index_offset: never written (normal, not an error)
+  }
+
+  unsigned long long offset = (unsigned long long)idx * this->block_size_;
   int file_index  = offset / this->max_file_size_;
   int file_offset = offset % this->max_file_size_;
 
@@ -507,10 +528,10 @@ ssize_t Rigel::Read(const int index,
   if (!this->OpenIndexMapping()) {
     return -1;
   }
-  if (index < 0 || (size_t)index >= this->index_map_.size) {
+  if ((size_t)idx >= this->index_map_.size) {
     return -1; // never written this far (normal, not an error)
   }
-  if (this->index_map_.ptr[index] != 1) {
+  if (this->index_map_.ptr[idx] != 1) {
     return -1;
   }
 
@@ -536,7 +557,8 @@ bool Rigel::ScanInit(const int start) {
   if (!this->OpenIndexMapping()) {
     return false;
   }
-  this->scan_pos_ = (start > 0) ? start : 0;
+  int internal_start = start - this->index_offset_;
+  this->scan_pos_ = (internal_start > 0) ? internal_start : 0;
   return true;
 }
 
@@ -556,7 +578,7 @@ int Rigel::ScanNext() {
     int idx = this->scan_pos_;
     this->scan_pos_++;
     if (this->index_map_.ptr[idx] != 0) {
-      return idx;
+      return idx + this->index_offset_;
     }
   }
   return -1;

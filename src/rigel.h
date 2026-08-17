@@ -39,22 +39,29 @@ namespace rigel {
     virtual ~Rigel();
 
     // Initializes with dirname/key/block_size/max_file_count given directly.
+    // index_offset shifts the externally visible index space: Write/Read/
+    // Delete/ScanInit/ScanNext all add/subtract it so every caller sharing
+    // this directory (via the same index_offset in rigel.meta) agrees on
+    // what index N means, without each one hand-rolling the arithmetic.
     virtual void Init(const char* dirname,
                       const char* key,
                       const int block_size=BLOCK_SIZE,
-                      const int max_file_count=MAX_FILE_COUNT);
+                      const int max_file_count=MAX_FILE_COUNT,
+                      const int index_offset=0);
 
-    // Initializes by reading key/block_size/max_file_count from the
-    // metadata file under dirname (written by WriteMeta). Returns false if
-    // the metadata is missing or malformed.
+    // Initializes by reading key/block_size/max_file_count/index_offset
+    // from the metadata file under dirname (written by WriteMeta). Returns
+    // false if the metadata is missing or malformed. index_offset defaults
+    // to 0 if the metadata predates it.
     virtual bool Init(const char* dirname);
 
-    // Writes key/block_size/max_file_count as metadata under dirname.
-    // Normally called from the rigel_init command.
+    // Writes key/block_size/max_file_count/index_offset as metadata under
+    // dirname. Normally called from the rigel_init command.
     static bool WriteMeta(const char* dirname,
                           const char* key,
                           const int block_size=BLOCK_SIZE,
-                          const int max_file_count=MAX_FILE_COUNT);
+                          const int max_file_count=MAX_FILE_COUNT,
+                          const int index_offset=0);
 
     virtual ssize_t Write(const int index,
                           const unsigned char* data,
@@ -91,6 +98,7 @@ namespace rigel {
           ? (int)(this->max_file_size_ / this->block_size_)
           : 0;
     }
+    int IndexOffset() const { return this->index_offset_; }
 
  private:
 
@@ -116,6 +124,7 @@ namespace rigel {
 
     int block_size_;
     unsigned long long max_file_size_;
+    int index_offset_;
     char dirname_[MAXPATHLEN];
     char key_[MAX_KEY_SIZE];
 

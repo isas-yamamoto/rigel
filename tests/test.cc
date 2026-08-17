@@ -190,6 +190,47 @@ int main() {
     check(!saw_0 && saw_1, "Scan skips a deleted index but still sees others");
   }
 
+  // index_offset: shifts the externally visible index space (e.g. so
+  // multiple tools agree that "index 1000" means the first record, not
+  // "index 0"). WriteMeta/Init(dirname) round-trip it, and every
+  // Write/Read/Delete/Scan call operates in the offset index space.
+  {
+    const char* off_dir = "/tmp/rigel_test_offset";
+    ::mkdir(off_dir, 0755);
+    check(rigel::Rigel::WriteMeta(off_dir, "off", 8, 4, 1000),
+          "WriteMeta succeeds with a non-zero index_offset");
+
+    rigel::Rigel r7;
+    check(r7.Init(off_dir), "Init(dirname) reads a metadata file with index_offset");
+    check(r7.IndexOffset() == 1000, "IndexOffset() reports the value from metadata");
+
+    unsigned char wbuf[8], rbuf[8];
+    std::memset(wbuf, 'Y', 8);
+    check(r7.Write(1000, wbuf, 8) == 8, "Write at the offset index (first record) succeeds");
+    check(r7.Read(1000, rbuf, 8) == 8 && std::memcmp(wbuf, rbuf, 8) == 0,
+          "Read at the offset index matches");
+
+    check(r7.Write(999, wbuf, 8) == -1, "Write below index_offset fails");
+    check(r7.Read(999, rbuf, 8) == -1, "Read below index_offset fails");
+
+    check(r7.Write(1001, wbuf, 8) == 8, "Write test: second record succeeds");
+    check(r7.ScanInit(), "Offset test: ScanInit succeeds");
+    bool saw_1000 = false, saw_1001 = false;
+    int idx;
+    while ((idx = r7.ScanNext()) >= 0) {
+      if (idx == 1000) saw_1000 = true;
+      if (idx == 1001) saw_1001 = true;
+    }
+    check(saw_1000 && saw_1001, "Scan returns indices already shifted by index_offset");
+
+    check(r7.Delete(1000), "Delete at an offset index succeeds");
+    check(r7.Read(1000, rbuf, 8) == -1, "Read fails after deleting an offset index");
+
+    rigel::Rigel r8;
+    r8.Init(off_dir, "off2", 8, 4); // index_offset defaults to 0
+    check(r8.IndexOffset() == 0, "Init() without index_offset defaults to 0");
+  }
+
   // LastError(): not set for a normal failure (reading an unwritten index),
   // but populated with a specific reason after misuse (out-of-range index).
   {

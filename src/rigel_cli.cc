@@ -2,7 +2,7 @@
  * rigel: general-purpose command-line tool for a Rigel data directory.
  *
  * Usage:
- *   rigel init  <dir> <key> [block_size] [max_file_count]
+ *   rigel init  <dir> <key> [block_size] [max_file_count] [index_offset]
  *   rigel read  <dir> <index>            (writes the raw record to stdout)
  *   rigel write <dir> <index>            (reads the raw record from stdin)
  *   rigel delete <dir> <index>           (clears a record back to never-written)
@@ -29,7 +29,7 @@ void PrintUsage(const char* prog) {
       "usage: %s <command> [args]\n"
       "\n"
       "commands:\n"
-      "  init  <dir> <key> [block_size] [max_file_count]\n"
+      "  init  <dir> <key> [block_size] [max_file_count] [index_offset]\n"
       "  read  <dir> <index>       write the raw record to stdout\n"
       "  write <dir> <index>       read the raw record from stdin\n"
       "  delete <dir> <index>      clear a record back to never-written\n"
@@ -46,13 +46,14 @@ int CmdVersion(int, char**) {
 
 int CmdInit(int argc, char** argv) {
   if (argc < 3) {
-    std::fprintf(stderr, "usage: rigel init <dir> <key> [block_size] [max_file_count]\n");
+    std::fprintf(stderr, "usage: rigel init <dir> <key> [block_size] [max_file_count] [index_offset]\n");
     return 1;
   }
   const char* dirname = argv[1];
   const char* key = argv[2];
   int block_size = (argc > 3) ? std::atoi(argv[3]) : rigel::BLOCK_SIZE;
   int max_file_count = (argc > 4) ? std::atoi(argv[4]) : rigel::MAX_FILE_COUNT;
+  int index_offset = (argc > 5) ? std::atoi(argv[5]) : 0;
 
   ::mkdir(dirname, 0755);
 
@@ -69,13 +70,13 @@ int CmdInit(int argc, char** argv) {
     return 1;
   }
 
-  if (!rigel::Rigel::WriteMeta(dirname, key, block_size, max_file_count)) {
+  if (!rigel::Rigel::WriteMeta(dirname, key, block_size, max_file_count, index_offset)) {
     // WriteMeta itself already prints the failure reason to stderr.
     return 1;
   }
 
-  std::printf("initialized %s (key=%s block_size=%d max_file_count=%d)\n",
-              dirname, key, block_size, max_file_count);
+  std::printf("initialized %s (key=%s block_size=%d max_file_count=%d index_offset=%d)\n",
+              dirname, key, block_size, max_file_count, index_offset);
   return 0;
 }
 
@@ -196,6 +197,7 @@ int CmdStat(int argc, char** argv) {
   std::printf("block_size:      %d\n", block_size);
   std::printf("max_file_count:  %d\n", max_file_count);
   std::printf("max_file_size:   %llu bytes\n", max_file_size);
+  std::printf("index_offset:    %d\n", rigel.IndexOffset());
 
   // Count records and find the index range by scanning the index file.
   long long record_count = 0;
