@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(rigel VERSION 1.0.0 LANGUAGES CXX C)
+project(rigel VERSION 2.0.0 LANGUAGES CXX C) # keep in sync with rigel::VERSION in src/rigel.h
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

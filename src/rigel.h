@@ -9,11 +9,16 @@
 
 namespace rigel {
 
-  // Library version (semantic versioning: major.minor.patch).
-  const int VERSION_MAJOR = 1;
+  // Library version (semantic versioning: major.minor.patch). Bumped to
+  // 2.0.0 because rigel_c_init()/rigel_c_init_from_meta() (rigel_c.h)
+  // gained a required trailing read_only parameter - a breaking change to
+  // the public C ABI, not just an addition, so a binary built against the
+  // old signatures must not silently link against this .so (see
+  // CMakeLists.txt's SOVERSION, which tracks VERSION_MAJOR).
+  const int VERSION_MAJOR = 2;
   const int VERSION_MINOR = 0;
   const int VERSION_PATCH = 0;
-  const char VERSION[] = "1.0.0";
+  const char VERSION[] = "2.0.0";
 
   // Max File Size(default 128MB)
   const int MAX_FILE_COUNT = 131072;

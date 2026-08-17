@@ -151,6 +151,39 @@ int main() {
     check(!r3.Delete(0), "Delete on a never-successfully-Init'd handle fails cleanly");
   }
 
+  // A large enough block_size*max_file_count (max_file_size_ > INT_MAX)
+  // used to get silently truncated: `int file_offset = offset %
+  // max_file_size_` narrowed a value that can itself exceed INT_MAX,
+  // aliasing unrelated indices onto the same physical byte offset with no
+  // error from either call - silent data corruption, not a crash.
+  {
+    const char* big_dir = "/tmp/rigel_test_large_shard";
+    ::mkdir(big_dir, 0755);
+    // block_size=65536, max_file_count=200000 -> max_file_size_ =
+    // 13,107,200,000 (~13GB, comfortably over INT_MAX ~2.1GB).
+    const int big_block_size = 65536;
+    rigel::Rigel big;
+    big.Init(big_dir, "big", big_block_size, 200000);
+
+    std::vector<unsigned char> bufA(big_block_size, 'A');
+    std::vector<unsigned char> bufB(big_block_size, 'B');
+    // index 66536 - index 1000 = 65536 records apart; at this block_size
+    // that's exactly max_file_size_ bytes apart, i.e. the two byte offsets
+    // used to collide once file_offset truncated to a 32-bit int.
+    check(big.Write(1000, bufA.data(), bufA.size()) == (ssize_t)big_block_size,
+          "Write index 1000 succeeds under a >2GB-per-shard geometry");
+    check(big.Write(66536, bufB.data(), bufB.size()) == (ssize_t)big_block_size,
+          "Write index 66536 succeeds under a >2GB-per-shard geometry");
+
+    std::vector<unsigned char> rbuf(big_block_size);
+    check(big.Read(1000, rbuf.data(), rbuf.size()) == (ssize_t)big_block_size &&
+              rbuf[0] == 'A',
+          "Read index 1000 returns its own data, not index 66536's (no silent aliasing)");
+    check(big.Read(66536, rbuf.data(), rbuf.size()) == (ssize_t)big_block_size &&
+              rbuf[0] == 'B',
+          "Read index 66536 returns its own data, not index 1000's (no silent aliasing)");
+  }
+
   // A key containing a path separator (e.g. from a hand-planted or
   // adversarial rigel.meta) must be rejected, not used to build paths -
   // otherwise "key=../../etc/passwd" could write/read outside dirname.
@@ -159,6 +192,21 @@ int main() {
           "WriteMeta rejects a key containing '/'");
     check(!rigel::Rigel::WriteMeta("/tmp/rigel_test_traversal", "", 64, 2),
           "WriteMeta rejects an empty key");
+
+    // Geometry must be validated up front, not left to fail every future
+    // Init(dirname) forever after (e.g. a mistyped, non-numeric CLI
+    // argument silently atoi()'d to 0 used to write a permanently
+    // unreadable rigel.meta with no error at `rigel init` time).
+    check(!rigel::Rigel::WriteMeta("/tmp/rigel_test_bad_geometry", "g", 0, 2),
+          "WriteMeta rejects block_size=0");
+    check(!rigel::Rigel::WriteMeta("/tmp/rigel_test_bad_geometry", "g", -8, 2),
+          "WriteMeta rejects a negative block_size");
+    check(!rigel::Rigel::WriteMeta("/tmp/rigel_test_bad_geometry", "g", 8, 0),
+          "WriteMeta rejects max_file_count=0");
+    check(!rigel::Rigel::WriteMeta("/tmp/rigel_test_bad_geometry", "g", 8, -2),
+          "WriteMeta rejects a negative max_file_count");
+    check(!rigel::Rigel::WriteMeta("/tmp/rigel_test_bad_geometry", "g", 8, 2, -1),
+          "WriteMeta rejects a negative index_offset");
 
     const char* traversal_dir = "/tmp/rigel_test_traversal";
     ::mkdir(traversal_dir, 0755);

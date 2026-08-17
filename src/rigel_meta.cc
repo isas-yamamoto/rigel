@@ -113,7 +113,7 @@ bool Rigel::Init(const char* dirname, const bool read_only) {
     return false;
   }
 
-  if (!IsValidKey(key) || block_size <= 0 || max_file_count <= 0) {
+  if (!IsValidKey(key) || block_size <= 0 || max_file_count <= 0 || index_offset < 0) {
     this->SetError("Init: invalid metadata in %s/%s", dirname, META_FILENAME);
     return false;
   }
@@ -139,6 +139,21 @@ bool Rigel::WriteMeta(const char* dirname,
                   "Rigel::WriteMeta: invalid key \"%s\" (must be non-empty and contain only "
                   "letters, digits, '.', '_', '-')\n",
                   key);
+    return false;
+  }
+  if (block_size <= 0 || max_file_count <= 0 || index_offset < 0) {
+    // Init(dirname) already rejects block_size<=0/max_file_count<=0 read
+    // back from rigel.meta (and rejecting index_offset<0 keeps Write/Read/
+    // Delete's `index - index_offset_` from ever being computed with a
+    // negative index_offset_, which risks signed overflow for large
+    // indices) - catch the same problem here instead of writing a
+    // rigel.meta that every future Init(dirname) will then refuse to read
+    // (e.g. a mistyped, non-numeric CLI argument silently atoi()'d to 0).
+    std::fprintf(stderr,
+                  "Rigel::WriteMeta: invalid block_size=%d/max_file_count=%d/index_offset=%d "
+                  "(block_size and max_file_count must be positive, index_offset must be "
+                  "non-negative)\n",
+                  block_size, max_file_count, index_offset);
     return false;
   }
 

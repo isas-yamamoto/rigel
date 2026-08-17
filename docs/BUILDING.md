@@ -31,8 +31,8 @@ Build outputs (same for either build system):
 | shared library | `librigel.so` |
 | static library | `librigel.a` |
 | headers | `rigel.h` (C++), `rigel_c.h` (C) |
-| CLI tool | `rigel` (subcommands: `init`, `read`, `write`, `delete`, `scan`, `stat`, `freeze`, `unfreeze`, `version`) |
-| test suites | `test`/`test_c` (Makefile) / `rigel_test`/`rigel_test_c` (CMake) |
+| CLI tool | `rigel` (subcommands: `init`, `read`, `write`, `delete`, `scan`, `dump`, `stat`, `freeze`, `unfreeze`, `version`) |
+| test suites | `test`/`test_c`/`test_cli` (Makefile) / `rigel_test`/`rigel_test_c`/`rigel_test_cli` (CMake) |
 
 ## Installing
 

@@ -163,6 +163,25 @@ int main() {
     RunShellBestEffort("chmod 0644 " + dir + "/testkey.0000 " + dir + "/testkey.index");
   }
 
+  // Non-numeric index/start/end/block_size arguments must error, not
+  // silently parse as 0 via std::atoi() the way they used to (a typo like
+  // "write <dir> abc" would otherwise silently target index 0).
+  {
+    check(RunCapture(cli + " write " + dir + " abc 2>&1").find("must be an integer") !=
+              std::string::npos,
+          "write with a non-numeric index errors instead of silently using 0");
+    check(RunCapture(cli + " read " + dir + " abc 2>&1").find("must be an integer") !=
+              std::string::npos,
+          "read with a non-numeric index errors instead of silently using 0");
+    check(RunCapture(cli + " scan " + dir + " abc 2>&1").find("must be an integer") !=
+              std::string::npos,
+          "scan with a non-numeric start errors instead of silently using 0");
+    check(RunCapture(cli + " init /tmp/rigel_test_cli_bad_init k abc 2>&1")
+              .find("must be integers") != std::string::npos,
+          "init with a non-numeric block_size errors instead of silently using 0");
+    RunShellBestEffort("rm -rf /tmp/rigel_test_cli_bad_init");
+  }
+
   RunShellBestEffort("rm -rf " + dir);
 
   if (g_fail == 0) {

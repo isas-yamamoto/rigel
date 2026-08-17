@@ -422,21 +422,28 @@ ssize_t Rigel::Write(const int index,
   }
 
   unsigned long long offset = (unsigned long long)idx * this->block_size_;
-  int file_index  = offset / this->max_file_size_;
-  int file_offset = offset % this->max_file_size_;
+  // Divide/mod first at full width, then range-check the quotient before
+  // ever narrowing it to int: with a large enough block_size*max_file_count
+  // (max_file_size_), offset/max_file_size_ can itself exceed INT_MAX, and
+  // truncating that into `int file_index` before the bounds check could
+  // wrap into some in-range-looking value - silently aliasing this index
+  // onto the wrong shard instead of getting caught by the check below.
+  unsigned long long file_index_raw = offset / this->max_file_size_;
+  size_t file_offset = (size_t)(offset % this->max_file_size_);
 
-  if (file_index < 0 || file_index >= MAX_FILE_INDEX) {
-    this->SetError("Write: index %d out of range (file_index=%d, MAX_FILE_INDEX=%d)",
-                    index, file_index, MAX_FILE_INDEX);
+  if (file_index_raw >= (unsigned long long)MAX_FILE_INDEX) {
+    this->SetError("Write: index %d out of range (file_index=%llu, MAX_FILE_INDEX=%d)",
+                    index, file_index_raw, MAX_FILE_INDEX);
     return -1;
   }
+  int file_index = (int)file_index_raw;
 
   DataMapping* dm = this->GetDataMapping(file_index, /*allow_read_only_fallback=*/false);
   if (dm == NULL) {
     return -1;
   }
-  if ((size_t)file_offset + size > dm->size) {
-    this->SetError("Write: size %zu at offset %d exceeds shard size %zu (index=%d)",
+  if (file_offset + size > dm->size) {
+    this->SetError("Write: size %zu at offset %zu exceeds shard size %zu (index=%d)",
                     size, file_offset, dm->size, index);
     return -1;
   }
@@ -492,8 +499,14 @@ bool Rigel::Delete(const int index) {
   }
 
   unsigned long long offset = (unsigned long long)idx * this->block_size_;
-  int file_index  = offset / this->max_file_size_;
-  int file_offset = offset % this->max_file_size_;
+  // idx was already found set (== 1) in an index file that only Write()
+  // ever grows/marks - so it must have passed Write()'s own file_index_raw
+  // bounds check to get there; still compute file_offset at full width
+  // (see the identical comment in Write()) since narrowing it directly
+  // into an int would risk the same silent-aliasing truncation.
+  unsigned long long file_index_raw = offset / this->max_file_size_;
+  size_t file_offset = (size_t)(offset % this->max_file_size_);
+  int file_index = (int)file_index_raw;
 
   DataMapping* dm = this->GetDataMapping(file_index, /*allow_read_only_fallback=*/false);
   if (dm == NULL) {
@@ -532,14 +545,17 @@ ssize_t Rigel::Read(const int index,
   }
 
   unsigned long long offset = (unsigned long long)idx * this->block_size_;
-  int file_index  = offset / this->max_file_size_;
-  int file_offset = offset % this->max_file_size_;
+  // See the identical comment in Write() re: computing at full width
+  // before narrowing file_index, to avoid a silent-aliasing truncation.
+  unsigned long long file_index_raw = offset / this->max_file_size_;
+  size_t file_offset = (size_t)(offset % this->max_file_size_);
 
-  if (file_index < 0 || file_index >= MAX_FILE_INDEX) {
-    this->SetError("Read: index %d out of range (file_index=%d, MAX_FILE_INDEX=%d)",
-                    index, file_index, MAX_FILE_INDEX);
+  if (file_index_raw >= (unsigned long long)MAX_FILE_INDEX) {
+    this->SetError("Read: index %d out of range (file_index=%llu, MAX_FILE_INDEX=%d)",
+                    index, file_index_raw, MAX_FILE_INDEX);
     return -1;
   }
+  int file_index = (int)file_index_raw;
 
   if (!this->OpenIndexMapping(/*allow_read_only_fallback=*/true)) {
     return -1;
@@ -564,7 +580,7 @@ ssize_t Rigel::Read(const int index,
     // otherwise resize it. Bail out here rather than let
     // `dm->size - file_offset` underflow into a huge size_t and memcpy
     // past the mapped region.
-    this->SetError("Read: shard file is smaller than expected (file_offset=%d, "
+    this->SetError("Read: shard file is smaller than expected (file_offset=%zu, "
                     "shard_size=%zu, index=%d)", file_offset, dm->size, index);
     return -1;
   }

@@ -5,7 +5,7 @@
 A C++ library for fast reads/writes of fixed-size records keyed by a
 sequential integer ID (0, 1, 2, ...).
 
-Licensed under the [MIT License](LICENSE). Current version: `1.0.0`
+Licensed under the [MIT License](LICENSE). Current version: `2.0.0`
 (see `rigel::VERSION` in `rigel.h`, or run `rigel version`).
 
 ## What is this, and when would I use it?
@@ -281,9 +281,9 @@ allowed in `key`, it can never escape `dirname` via `../` traversal -
 which matters because `rigel.meta` is a file inside the directory, so
 its `key` could come from someone other than whoever is currently
 running `rigel` against it. This restriction does not apply to `key`
-when passed directly to `Init(dirname, key, block_size,
-max_file_count)`, which is trusted the same as any other caller-supplied
-value.
+when passed directly to `Init(dirname, key, block_size, max_file_count,
+index_offset, read_only)`, which is trusted the same as any other
+caller-supplied value.
 
 ## Limitations
 
@@ -292,6 +292,15 @@ value.
   loss).
 - The index file grows (1MiB at a time) to match the highest index
   written. Each data file has a fixed size of `block_size * max_file_count`.
+  Since the index is a dense array addressed by `index * block_size`
+  arithmetic (see "What is this" above), a single write to a large but
+  in-range index grows the index file to cover every index up to it in
+  one shot - e.g. one 1-byte write to index 2,000,000,000 immediately
+  grows the index file to ~2GB, even though nothing else was ever
+  written. This is inherent to the format (there's no B-tree to keep it
+  sparse), not a bug, but it means an index value from an untrusted
+  source shouldn't be passed to `Write`/`Read`/`Delete` unvalidated in a
+  context where disk exhaustion from one call would matter.
 - Open data shards are capped (least-recently-used ones are evicted -
   munmap'd and closed - once the cap is exceeded), so a long-lived
   process that touches many shards over its lifetime doesn't accumulate

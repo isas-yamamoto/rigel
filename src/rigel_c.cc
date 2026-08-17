@@ -15,16 +15,22 @@ RigelHandle* rigel_c_create(void) {
 }
 
 void rigel_c_destroy(RigelHandle* h) {
-  delete h;
+  delete h; // delete on NULL is a well-defined no-op; nothing to guard.
 }
 
 void rigel_c_init(RigelHandle* h, const char* dirname, const char* key,
                    int block_size, int max_file_count, int index_offset,
                    int read_only) {
+  if (h == NULL) {
+    return;
+  }
   h->impl.Init(dirname, key, block_size, max_file_count, index_offset, read_only != 0);
 }
 
 int rigel_c_init_from_meta(RigelHandle* h, const char* dirname, int read_only) {
+  if (h == NULL) {
+    return 0;
+  }
   return h->impl.Init(dirname, read_only != 0) ? 1 : 0;
 }
 
@@ -34,50 +40,86 @@ int rigel_c_write_meta(const char* dirname, const char* key,
 }
 
 ssize_t rigel_c_write(RigelHandle* h, int index, const unsigned char* data, size_t size) {
+  if (h == NULL) {
+    return -1;
+  }
   return h->impl.Write(index, data, size);
 }
 
 ssize_t rigel_c_read(RigelHandle* h, int index, unsigned char* data, size_t size) {
+  if (h == NULL) {
+    return -1;
+  }
   return h->impl.Read(index, data, size);
 }
 
 int rigel_c_delete(RigelHandle* h, int index) {
+  if (h == NULL) {
+    return 0;
+  }
   return h->impl.Delete(index) ? 1 : 0;
 }
 
 int rigel_c_scan_init(RigelHandle* h, int start) {
+  if (h == NULL) {
+    return 0;
+  }
   return h->impl.ScanInit(start) ? 1 : 0;
 }
 
 int rigel_c_scan_next(RigelHandle* h) {
+  if (h == NULL) {
+    return -1;
+  }
   return h->impl.ScanNext();
 }
 
 const char* rigel_c_last_error(const RigelHandle* h) {
+  if (h == NULL) {
+    return "rigel_c_last_error: handle is NULL";
+  }
   return h->impl.LastError();
 }
 
 int rigel_c_block_size(const RigelHandle* h) {
+  if (h == NULL) {
+    return 0;
+  }
   return h->impl.BlockSize();
 }
 
 const char* rigel_c_key(const RigelHandle* h) {
+  if (h == NULL) {
+    return "";
+  }
   return h->impl.Key();
 }
 
 int rigel_c_max_file_count(const RigelHandle* h) {
+  if (h == NULL) {
+    return 0;
+  }
   return h->impl.MaxFileCount();
 }
 
 int rigel_c_index_offset(const RigelHandle* h) {
+  if (h == NULL) {
+    return 0;
+  }
   return h->impl.IndexOffset();
 }
 
 int rigel_c_frozen(const RigelHandle* h) {
+  if (h == NULL) {
+    return 0;
+  }
   return h->impl.Frozen() ? 1 : 0;
 }
 
 int rigel_c_read_only(const RigelHandle* h) {
+  if (h == NULL) {
+    return 0;
+  }
   return h->impl.ReadOnly() ? 1 : 0;
 }
 
@@ -86,6 +128,9 @@ int rigel_c_set_frozen(const char* dirname, int frozen) {
 }
 
 int rigel_c_stat(RigelHandle* h, RigelCStat* out) {
+  if (h == NULL || out == NULL) {
+    return 0;
+  }
   rigel::Rigel::Stat st;
   if (!h->impl.GetStat(&st)) {
     return 0;

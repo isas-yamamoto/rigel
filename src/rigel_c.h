@@ -6,6 +6,10 @@
  *  wraps it behind an opaque handle and a plain function API so C code
  *  can use it too. Same library, same rigel.meta format - a directory
  *  written via this API can be read via rigel::Rigel and vice versa.
+ *
+ *  Every function taking a RigelHandle* tolerates NULL: it's treated as
+ *  misuse and reported through that function's normal failure return
+ *  (-1/0/""), never dereferenced. rigel_c_destroy(NULL) is a no-op.
  */
 #ifndef RIGEL_RIGEL_C_H_
 #define RIGEL_RIGEL_C_H_

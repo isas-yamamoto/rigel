@@ -6,7 +6,7 @@ LDFLAGS=-pthread
 OBJS=rigel.o rigel_meta.o rigel_c.o
 
 # Keep in sync with rigel::VERSION in rigel.h.
-VERSION=1.0.0
+VERSION=2.0.0
 
 PREFIX ?= /usr/local
 INCLUDEDIR=$(PREFIX)/include

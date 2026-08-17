@@ -91,6 +91,26 @@ int main(void) {
         "rigel_c_read on a read_only handle misses cleanly when the index file doesn't exist yet");
   rigel_c_destroy(h);
 
+  /* Every function taking a RigelHandle* must tolerate NULL - reported
+     through its normal failure return, not a segfault from a caller bug
+     (e.g. skipping a NULL check on rigel_c_create()'s result). */
+  rigel_c_init(NULL, empty_dir, "capi", 8, 4, 0, 0); /* must not crash */
+  check(!rigel_c_init_from_meta(NULL, empty_dir, 0), "rigel_c_init_from_meta(NULL, ...) fails cleanly");
+  check(rigel_c_write(NULL, 0, wbuf, 8) == -1, "rigel_c_write(NULL, ...) fails cleanly");
+  check(rigel_c_read(NULL, 0, rbuf, 8) == -1, "rigel_c_read(NULL, ...) fails cleanly");
+  check(!rigel_c_delete(NULL, 0), "rigel_c_delete(NULL, ...) fails cleanly");
+  check(!rigel_c_scan_init(NULL, 0), "rigel_c_scan_init(NULL, ...) fails cleanly");
+  check(rigel_c_scan_next(NULL) == -1, "rigel_c_scan_next(NULL) fails cleanly");
+  check(rigel_c_last_error(NULL) != NULL, "rigel_c_last_error(NULL) returns a non-NULL string");
+  check(rigel_c_block_size(NULL) == 0, "rigel_c_block_size(NULL) returns 0");
+  check(rigel_c_key(NULL) != NULL, "rigel_c_key(NULL) returns a non-NULL string");
+  check(rigel_c_max_file_count(NULL) == 0, "rigel_c_max_file_count(NULL) returns 0");
+  check(rigel_c_index_offset(NULL) == 0, "rigel_c_index_offset(NULL) returns 0");
+  check(!rigel_c_frozen(NULL), "rigel_c_frozen(NULL) returns 0");
+  check(!rigel_c_read_only(NULL), "rigel_c_read_only(NULL) returns 0");
+  check(!rigel_c_stat(NULL, &st), "rigel_c_stat(NULL, ...) fails cleanly");
+  rigel_c_destroy(NULL); /* must not crash */
+
   if (g_fail == 0) {
     printf("All tests passed\n");
   } else {

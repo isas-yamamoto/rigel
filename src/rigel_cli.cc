@@ -18,6 +18,8 @@
  *
  * Example: rigel read /data/foo 42 | hexdump -C
  */
+#include <cerrno>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +29,24 @@
 #include "rigel.h"
 
 namespace {
+
+// Parses s as a base-10 int, rejecting empty/non-numeric/out-of-range
+// input. std::atoi() silently maps all of those to 0, which used to let a
+// typo (e.g. `rigel write /data abc`, meaning index 123) silently target
+// index 0 instead of erroring.
+bool ParseInt(const char* s, int* out) {
+  if (s == NULL || *s == '\0') {
+    return false;
+  }
+  char* end = NULL;
+  errno = 0;
+  long v = std::strtol(s, &end, 10);
+  if (*end != '\0' || errno == ERANGE || v < INT_MIN || v > INT_MAX) {
+    return false;
+  }
+  *out = (int)v;
+  return true;
+}
 
 void PrintUsage(const char* prog) {
   std::fprintf(stderr,
@@ -100,9 +120,16 @@ int CmdInit(int argc, char** argv) {
   }
   const char* dirname = argv[1];
   const char* key = argv[2];
-  int block_size = (argc > 3) ? std::atoi(argv[3]) : rigel::BLOCK_SIZE;
-  int max_file_count = (argc > 4) ? std::atoi(argv[4]) : rigel::MAX_FILE_COUNT;
-  int index_offset = (argc > 5) ? std::atoi(argv[5]) : 0;
+  int block_size = rigel::BLOCK_SIZE;
+  int max_file_count = rigel::MAX_FILE_COUNT;
+  int index_offset = 0;
+  if ((argc > 3 && !ParseInt(argv[3], &block_size)) ||
+      (argc > 4 && !ParseInt(argv[4], &max_file_count)) ||
+      (argc > 5 && !ParseInt(argv[5], &index_offset))) {
+    std::fprintf(stderr,
+                  "rigel init: block_size/max_file_count/index_offset must be integers\n");
+    return 1;
+  }
 
   ::mkdir(dirname, 0755);
 
@@ -140,7 +167,11 @@ int CmdRead(int argc, char** argv) {
     return 1;
   }
   const char* dirname = argv[1];
-  int index = std::atoi(argv[2]);
+  int index;
+  if (!ParseInt(argv[2], &index)) {
+    std::fprintf(stderr, "rigel read: <index> must be an integer\n");
+    return 1;
+  }
 
   rigel::Rigel rigel;
   if (!rigel.Init(dirname, read_only)) {
@@ -166,7 +197,11 @@ int CmdWrite(int argc, char** argv) {
     return 1;
   }
   const char* dirname = argv[1];
-  int index = std::atoi(argv[2]);
+  int index;
+  if (!ParseInt(argv[2], &index)) {
+    std::fprintf(stderr, "rigel write: <index> must be an integer\n");
+    return 1;
+  }
 
   rigel::Rigel rigel;
   if (!rigel.Init(dirname)) {
@@ -191,7 +226,11 @@ int CmdDelete(int argc, char** argv) {
     return 1;
   }
   const char* dirname = argv[1];
-  int index = std::atoi(argv[2]);
+  int index;
+  if (!ParseInt(argv[2], &index)) {
+    std::fprintf(stderr, "rigel delete: <index> must be an integer\n");
+    return 1;
+  }
 
   rigel::Rigel rigel;
   if (!rigel.Init(dirname)) {
@@ -217,7 +256,11 @@ int CmdScan(int argc, char** argv) {
     return 1;
   }
   const char* dirname = argv[1];
-  int start = (argc > 2) ? std::atoi(argv[2]) : 0;
+  int start = 0;
+  if (argc > 2 && !ParseInt(argv[2], &start)) {
+    std::fprintf(stderr, "rigel scan: [start] must be an integer\n");
+    return 1;
+  }
 
   rigel::Rigel rigel;
   if (!rigel.Init(dirname, read_only)) {
@@ -250,8 +293,13 @@ int CmdDump(int argc, char** argv) {
   }
 
   const char* dirname = positional[1];
-  int start = (positional.size() > 2) ? std::atoi(positional[2]) : 0;
-  int end = (positional.size() > 3) ? std::atoi(positional[3]) : -1; // -1 = no upper bound
+  int start = 0;
+  int end = -1; // -1 = no upper bound
+  if ((positional.size() > 2 && !ParseInt(positional[2], &start)) ||
+      (positional.size() > 3 && !ParseInt(positional[3], &end))) {
+    std::fprintf(stderr, "rigel dump: [start]/[end] must be integers\n");
+    return 1;
+  }
 
   rigel::Rigel rigel;
   if (!rigel.Init(dirname, read_only)) {
