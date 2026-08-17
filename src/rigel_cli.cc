@@ -263,7 +263,6 @@ int CmdDump(int argc, char** argv) {
     std::fprintf(stderr, "rigel dump: %s\n", rigel.LastError());
     return 1;
   }
-  NoteIfAutoReadOnly(rigel, read_only, "dump", dirname);
 
   std::vector<unsigned char> buf(rigel.BlockSize());
   std::vector<char> hex(buf.size() * 2 + 1);
@@ -287,6 +286,12 @@ int CmdDump(int argc, char** argv) {
       std::printf("%d: %s\n", idx, hex.data());
     }
   }
+  // Checked once at the end, not right after ScanInit: ScanInit's open is
+  // against the index file, but the fallback that matters here just as
+  // often comes from a per-record Read() above (e.g. the index file is
+  // writable but the shard files aren't) - checking only after ScanInit
+  // would miss that.
+  NoteIfAutoReadOnly(rigel, read_only, "dump", dirname);
   return 0;
 }
 

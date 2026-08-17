@@ -7,6 +7,7 @@
  */
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
@@ -412,6 +413,44 @@ int main() {
 
     ::chmod(shard_path, 0644);
     ::chmod(index_path, 0644);
+  }
+
+  // A read-only handle's mapping is sized to the shard file's actual size,
+  // not the fixed max_file_size_ every writable mapping gets ftruncate'd
+  // to (e.g. rigel.meta's max_file_count was raised after this shard was
+  // created, and a read-only handle can never trigger the grow-on-write
+  // that would otherwise resize it). Read() must catch a file_offset past
+  // that smaller size, not let `dm->size - file_offset` underflow into a
+  // memcpy past the mapped region.
+  {
+    const char* shrunk_dir = "/tmp/rigel_test_readonly_shrunk";
+    ::mkdir(shrunk_dir, 0755);
+    check(rigel::Rigel::WriteMeta(shrunk_dir, "shrunk", 8, 4), "WriteMeta succeeds");
+
+    char shard_path[MAXPATHLEN + 32];
+    std::snprintf(shard_path, sizeof(shard_path), "%s/shrunk.0000", shrunk_dir);
+
+    unsigned char wbuf[8], rbuf[8];
+    std::memset(wbuf, 'S', 8);
+    {
+      rigel::Rigel writer;
+      check(writer.Init(shrunk_dir), "Init(dirname) succeeds for the writer handle");
+      // Write index 3 (the shard's last slot: file_offset 24, block_size
+      // 8 -> shard grows to the full max_file_size_ of 32 bytes).
+      check(writer.Write(3, wbuf, 8) == 8, "Write to the shard's last slot succeeds");
+    }
+
+    // Simulate the shard predating a later max_file_count increase: shrink
+    // the file itself back down without touching the index, so index bit
+    // 3 still reads as written but the shard no longer has 32 bytes.
+    check(::truncate(shard_path, 16) == 0, "truncating the shard file back down succeeds");
+
+    rigel::Rigel reader;
+    check(reader.Init(shrunk_dir, /*read_only=*/true), "Init(dirname, read_only=true) succeeds");
+    check(reader.Read(3, rbuf, 8) == -1,
+          "Read fails cleanly (not an OOB memcpy) when the shard is smaller than file_offset needs");
+    check(std::strstr(reader.LastError(), "smaller than expected") != NULL,
+          "LastError names the undersized shard as the reason");
   }
 
   // SetFrozen() must not clobber hand-added '#' comments in rigel.meta -

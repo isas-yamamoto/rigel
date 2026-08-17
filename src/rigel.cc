@@ -555,6 +555,19 @@ ssize_t Rigel::Read(const int index,
   if (dm == NULL) {
     return -1;
   }
+  if ((size_t)file_offset >= dm->size) {
+    // Only reachable for a read-only mapping (dm->size is the shard's
+    // actual on-disk size there, not the fixed max_file_size_ every
+    // writable mapping is grown to) - e.g. max_file_count was raised in
+    // rigel.meta after this shard was created, and a read-only handle can
+    // never trigger the grow-on-write in GetDataMapping() that would
+    // otherwise resize it. Bail out here rather than let
+    // `dm->size - file_offset` underflow into a huge size_t and memcpy
+    // past the mapped region.
+    this->SetError("Read: shard file is smaller than expected (file_offset=%d, "
+                    "shard_size=%zu, index=%d)", file_offset, dm->size, index);
+    return -1;
+  }
   size_t avail = dm->size - (size_t)file_offset;
   size_t n = (size < avail) ? size : avail;
   std::memcpy(data, dm->ptr + file_offset, n);

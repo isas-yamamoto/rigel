@@ -144,10 +144,18 @@ namespace rigel {
     // fail, Read/Scan still work.
     bool Frozen() const { return this->frozen_; }
 
-    // True if this handle was opened with Init's read_only=true: Write/
-    // Delete fail, Read/Scan still work. Unlike Frozen(), this is local to
-    // this instance, not read from rigel.meta.
-    bool ReadOnly() const { return this->read_only_; }
+    // True if this handle was opened with Init's read_only=true, or has
+    // since auto-detected it (see OpenMaybeReadOnly() in rigel.cc):
+    // Write/Delete fail, Read/Scan still work. Unlike Frozen(), this is
+    // local to this instance, not read from rigel.meta. Locked (unlike the
+    // other accessors above) because auto-detection can flip read_only_
+    // from inside a concurrent Read()/ScanInit() call on another thread -
+    // an unsynchronized read here would be a real data race, not just a
+    // theoretical one.
+    bool ReadOnly() const {
+      std::lock_guard<std::mutex> lock(this->mutex_);
+      return this->read_only_;
+    }
 
  private:
 
