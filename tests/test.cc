@@ -300,6 +300,55 @@ int main() {
           "SetFrozen fails for a directory with no metadata");
   }
 
+  // SetFrozen() must not clobber hand-added '#' comments in rigel.meta -
+  // it used to go through WriteMeta(), which regenerates the whole file
+  // and silently dropped them.
+  {
+    const char* commented_dir = "/tmp/rigel_test_frozen_comments";
+    ::mkdir(commented_dir, 0755);
+    char meta_path[MAXPATHLEN + 32];
+    std::snprintf(meta_path, sizeof(meta_path), "%s/rigel.meta", commented_dir);
+
+    FILE* f = std::fopen(meta_path, "w");
+    std::fprintf(f, "# hand-written comment above key\n");
+    std::fprintf(f, "key=commented\n");
+    std::fprintf(f, "block_size=8\n");
+    std::fprintf(f, "max_file_count=4\n");
+    std::fprintf(f, "# hand-written comment at the end\n");
+    std::fclose(f);
+
+    check(rigel::Rigel::SetFrozen(commented_dir, true), "SetFrozen(true) succeeds");
+
+    f = std::fopen(meta_path, "r");
+    char contents[1024];
+    size_t n = std::fread(contents, 1, sizeof(contents) - 1, f);
+    contents[n] = '\0';
+    std::fclose(f);
+
+    check(std::strstr(contents, "# hand-written comment above key") != NULL,
+          "SetFrozen preserves a comment line above the fields");
+    check(std::strstr(contents, "# hand-written comment at the end") != NULL,
+          "SetFrozen preserves a comment line after the fields");
+    check(std::strstr(contents, "frozen=1") != NULL,
+          "SetFrozen still adds the frozen=1 line");
+
+    rigel::Rigel r12;
+    check(r12.Init(commented_dir) && r12.Frozen(),
+          "the directory reads back as frozen despite the comments");
+
+    // Freezing again (already frozen -> frozen) must not duplicate the line.
+    check(rigel::Rigel::SetFrozen(commented_dir, true), "SetFrozen(true) again succeeds");
+    f = std::fopen(meta_path, "r");
+    n = std::fread(contents, 1, sizeof(contents) - 1, f);
+    contents[n] = '\0';
+    std::fclose(f);
+    int frozen_line_count = 0;
+    for (const char* p = contents; (p = std::strstr(p, "frozen=")) != NULL; ++p) {
+      frozen_line_count++;
+    }
+    check(frozen_line_count == 1, "re-freezing does not duplicate the frozen= line");
+  }
+
   // LastError(): not set for a normal failure (reading an unwritten index),
   // but populated with a specific reason after misuse (out-of-range index).
   {

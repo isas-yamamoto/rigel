@@ -264,7 +264,12 @@ bool Rigel::WriteMeta(const char* dirname,
 
 /**
  *  @brief Flips the frozen flag on an already-initialized directory in
- *  place, leaving key/block_size/max_file_count/index_offset untouched.
+ *  place, leaving key/block_size/max_file_count/index_offset - and any
+ *  hand-added '#' comment lines - untouched.
+ *
+ *  Rewrites only the "frozen=" line (appending one if absent) rather than
+ *  regenerating the whole file via WriteMeta(), which would silently drop
+ *  comments a user had added to rigel.meta by hand.
  *
  *  @return false if dirname has no valid metadata to read.
  */
@@ -277,7 +282,41 @@ bool Rigel::SetFrozen(const char* dirname, bool frozen) {
       !IsValidKey(key) || block_size <= 0 || max_file_count <= 0) {
     return false;
   }
-  return WriteMeta(dirname, key, block_size, max_file_count, index_offset, frozen);
+
+  char filename[MAXPATHLEN + 32];
+  std::snprintf(filename, sizeof(filename), "%s/%s", dirname, META_FILENAME);
+
+  FILE* in = std::fopen(filename, "r");
+  if (in == NULL) {
+    return false;
+  }
+  std::string rewritten;
+  bool wrote_frozen_line = false;
+  char line[512];
+  while (std::fgets(line, sizeof(line), in) != NULL) {
+    char name[64];
+    char value[448];
+    if (line[0] != '#' &&
+        std::sscanf(line, "%63[^=]=%447[^\n]", name, value) == 2 &&
+        std::strcmp(name, "frozen") == 0) {
+      rewritten += frozen ? "frozen=1\n" : "frozen=0\n";
+      wrote_frozen_line = true;
+    } else {
+      rewritten += line; // unrelated field, or a comment - kept as-is
+    }
+  }
+  std::fclose(in);
+  if (!wrote_frozen_line) {
+    rewritten += frozen ? "frozen=1\n" : "frozen=0\n";
+  }
+
+  FILE* out = std::fopen(filename, "w");
+  if (out == NULL) {
+    return false;
+  }
+  std::fwrite(rewritten.data(), 1, rewritten.size(), out);
+  std::fclose(out);
+  return true;
 }
 
 /**
