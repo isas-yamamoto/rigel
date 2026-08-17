@@ -1,6 +1,6 @@
 # For RIGEL (Next SIRIUS Project)
 
-CXX=s++
+CXX=g++
 CXXFLAGS=-Wall -O3 -std=c++11 -fPIC -pthread
 LDFLAGS=-pthread
 OBJS=rigel.o
