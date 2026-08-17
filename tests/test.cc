@@ -162,6 +162,32 @@ int main() {
           "Init(dirname) rejects a hand-planted rigel.meta with a traversal key");
   }
 
+  // A line starting with '#' is a comment and must be ignored even if it
+  // contains what looks like a field assignment (e.g. "# key=trap"), so
+  // rigel.meta can be hand-annotated without risk of a comment shadowing
+  // the real value.
+  {
+    const char* comment_dir = "/tmp/rigel_test_comment";
+    ::mkdir(comment_dir, 0755);
+    FILE* f = std::fopen("/tmp/rigel_test_comment/rigel.meta", "w");
+    if (f != NULL) {
+      std::fprintf(f, "# hand-annotated rigel.meta\n");
+      std::fprintf(f, "# key=trap\n");
+      std::fprintf(f, "key=commented\n");
+      std::fprintf(f, "block_size=8\n");
+      std::fprintf(f, "max_file_count=4\n");
+      std::fprintf(f, "# index_offset=9999\n");
+      std::fprintf(f, "index_offset=1000\n");
+      std::fclose(f);
+    }
+    rigel::Rigel r9;
+    check(r9.Init(comment_dir), "Init(dirname) reads a rigel.meta with comment lines");
+    check(std::strcmp(r9.Key(), "commented") == 0,
+          "A '#'-commented field assignment doesn't shadow the real one");
+    check(r9.IndexOffset() == 1000,
+          "A '#'-commented index_offset doesn't shadow the real one");
+  }
+
   // Delete: clears an index back to never-written (Read fails, Scan skips
   // it), and is a harmless no-op on an index that was never written.
   {

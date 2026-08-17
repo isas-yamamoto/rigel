@@ -168,6 +168,9 @@ bool Rigel::Init(const char* dirname) {
 
   char line[512];
   while (std::fgets(line, sizeof(line), f) != NULL) {
+    if (line[0] == '#') {
+      continue; // comment line, even one containing "key=" or similar
+    }
     char name[64];
     char value[448];
     if (std::sscanf(line, "%63[^=]=%447[^\n]", name, value) == 2) {

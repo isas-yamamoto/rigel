@@ -121,6 +121,9 @@ stored in `rigel.meta` precisely so every tool/process touching the
 same directory agrees on what index N means without each one
 separately hard-coding or passing around the same shift.
 
+Lines starting with `#` are treated as comments (ignored even if they
+happen to contain e.g. `key=`), so `rigel.meta` can be hand-annotated.
+
 The `rigel` command doubles as a quick way to poke at a directory from
 the shell:
 
