@@ -4,6 +4,7 @@
 #include <sys/param.h>
 #include <sys/types.h>
 #include <fstream>
+#include <unordered_map>
 #include "google.h"
 
 namespace rigel {
@@ -19,6 +20,12 @@ namespace rigel {
   const int MAX_KEY_SIZE = 256;
 
   const int BUF_SIZE = 4096;
+
+  enum OpType {
+    kOpNone = 0,
+    kOpRead = 1,
+    kOpWrite = 2,
+  };
 
   class Rigel {
 
@@ -43,10 +50,24 @@ namespace rigel {
 
  private:
 
+    // Read/Write 用のファイルハンドル。開いたら閉じず使い回し、
+    // かつ直前の操作から位置が動いていなければ seek もスキップする。
+    // (C++の規格上、read <-> write を切り替える際は間に seek が要るので、
+    //  位置と直前操作の種別(last_op)の両方が一致したときだけ省略する)
+    struct Handle {
+      std::fstream stream;
+      long long pos;   // -1: 位置不明(未使用/失敗直後)
+      int last_op;     // kOpNone / kOpRead / kOpWrite
+      Handle() : pos(-1), last_op(kOpNone) {}
+    };
+
     int block_size_;
     unsigned long long max_file_size_;
     char dirname_[MAXPATHLEN];
     char key_[MAX_KEY_SIZE];
+
+    std::unordered_map<int, Handle> data_handles_;
+    Handle index_handle_;
 
     // for Scan
     std::fstream scan_io;
@@ -55,20 +76,16 @@ namespace rigel {
     int scan_index_;
     int scan_offset_;
 
+    void DataFilename(int file_index, char* buf, size_t buflen) const;
+    void IndexFilename(char* buf, size_t buflen) const;
+
     bool Open(const int index,
-                 std::fstream& data_io,
-                 std::fstream& index_io,
-                 const char* mode,
-                 const char* err_mode);
+              OpType op,
+              Handle** data_io,
+              Handle** index_io);
 
-    bool OpenData(std::fstream& data_io,
-                  int file_index,
-                  const char* mode,
-                  const char* err_mode);
-
-    bool OpenIndex(std::fstream& index_io,
-                   const char* mode,
-                   const char* err_mode);
+    Handle* GetDataHandle(int file_index);
+    Handle* GetIndexHandle();
 
     DISALLOW_COPY_AND_ASSIGN(Rigel);
   };

@@ -11,21 +11,6 @@
 namespace rigel
 {
 
-namespace {
-
-std::ios_base::openmode ModeFromString(const char* mode) {
-  if (std::strcmp(mode, "r+b") == 0) {
-    return std::ios::in | std::ios::out | std::ios::binary;
-  }
-  if (std::strcmp(mode, "w+b") == 0) {
-    return std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc;
-  }
-  // "rb" and anything else
-  return std::ios::in | std::ios::binary;
-}
-
-} // namespace
-
 /**
  *  @brief constructor
  *
@@ -59,21 +44,87 @@ void Rigel::Init(const char* dirname,
   this->key_[MAX_KEY_SIZE-1] = '\0';
 }
 
+void Rigel::DataFilename(int file_index, char* buf, size_t buflen) const {
+  std::snprintf(buf, buflen, "%s/%s.%04d", this->dirname_, this->key_, file_index);
+}
+
+void Rigel::IndexFilename(char* buf, size_t buflen) const {
+  std::snprintf(buf, buflen, "%s/%s.index", this->dirname_, this->key_);
+}
+
 /**
- *  @brief 関連ファイルを開く。
+ *  @brief file_indexに対応するデータファイルのハンドルを返す。
  *
- *  @param[in] data_io データ関連のファイルを扱うクラス
- *  @param[in] index_io インデックス関連のファイルを扱うクラス
- *  @param[in] mode ファイルを開くモード
- *  @param[in] err_mode modeでファイルを開けなかった場合に開くモード
+ *  一度開いたハンドルはRigelインスタンスが破棄されるまで開いたままにする。
+ *  毎回のRead/Writeでopen/closeするコストを避けるため。
+ *
+ *  @return 成功したときはハンドルへのポインタ、失敗したときはnullptr。
+ */
+Rigel::Handle* Rigel::GetDataHandle(int file_index) {
+  Handle& h = this->data_handles_[file_index];
+  if (!h.stream.is_open()) {
+    char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
+    this->DataFilename(file_index, filename, sizeof(filename));
+
+    h.stream.open(filename, std::ios::in | std::ios::out | std::ios::binary);
+    if (!h.stream.is_open()) {
+      h.stream.clear();
+      h.stream.open(filename, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc);
+    }
+    if (!h.stream.is_open()) {
+      std::fprintf(stderr, "ERROR Rigel::Open filename=%s\n", filename);
+      this->data_handles_.erase(file_index);
+      return NULL;
+    }
+    h.pos = -1;
+    h.last_op = kOpNone;
+  }
+  return &h;
+}
+
+/**
+ *  @brief インデックスファイルのハンドルを返す（同様に開きっぱなしにする）。
+ *
+ *  @return 成功したときはハンドルへのポインタ、失敗したときはnullptr。
+ */
+Rigel::Handle* Rigel::GetIndexHandle() {
+  if (!this->index_handle_.stream.is_open()) {
+    char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
+    this->IndexFilename(filename, sizeof(filename));
+
+    this->index_handle_.stream.open(filename, std::ios::in | std::ios::out | std::ios::binary);
+    if (!this->index_handle_.stream.is_open()) {
+      this->index_handle_.stream.clear();
+      this->index_handle_.stream.open(filename, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc);
+    }
+    if (!this->index_handle_.stream.is_open()) {
+      return NULL;
+    }
+    this->index_handle_.pos = -1;
+    this->index_handle_.last_op = kOpNone;
+  }
+  return &this->index_handle_;
+}
+
+/**
+ *  @brief indexに対応するデータ/インデックスハンドルを求め、必要なら書き込み/読み込み位置までシークする。
+ *
+ *  ハンドルの現在位置が既に目的の位置にあり、かつ直前の操作が今回と同じ
+ *  read/writeの向きであれば、seekそのものを省略する。
+ *  (read/writeの向きが変わる場合は、C++の規格上シークを挟む必要があるため
+ *   位置が同じでも必ずseekする)
+ *
+ *  @param[in] index インデックス
+ *  @param[in] op 今回行う操作(kOpRead/kOpWrite)
+ *  @param[out] data_io データファイルのハンドル
+ *  @param[out] index_io インデックスファイルのハンドル
  *  @return 成功したときはtrueを返す。
  *  失敗したときはfalseを返す。
  */
 bool Rigel::Open(const int index,
-                    std::fstream& data_io,
-                    std::fstream& index_io,
-                    const char* mode,
-                    const char* err_mode) {
+                    OpType op,
+                    Handle** data_io,
+                    Handle** index_io) {
 
   unsigned long long offset = index;
   offset *= this->block_size_;
@@ -85,85 +136,32 @@ bool Rigel::Open(const int index,
     return false;
   }
 
-  if (OpenData(data_io,file_index,mode,err_mode)) {
-    data_io.seekg(file_offset, std::ios::beg);
-    data_io.seekp(file_offset, std::ios::beg);
-  } else {
+  Handle* data = this->GetDataHandle(file_index);
+  if (data == NULL) {
     return false;
   }
+  if (data->pos != file_offset || data->last_op != op) {
+    data->stream.clear();
+    data->stream.seekg(file_offset, std::ios::beg);
+    data->stream.seekp(file_offset, std::ios::beg);
+  }
+  data->pos = file_offset;
+  data->last_op = op;
 
-  if (OpenIndex(index_io,mode,err_mode)) {
-    index_io.seekg(index, std::ios::beg);
-    index_io.seekp(index, std::ios::beg);
-  } else {
+  Handle* idx = this->GetIndexHandle();
+  if (idx == NULL) {
     return false;
   }
-
-  return true;
-}
-
-/**
- *  @brief データファイルを開く。
- *
- *  @param[in] data_io データ関連のファイルを扱うクラス
- *  @param[in] file_index 開くべきファイルのインデックス
- *  @param[in] mode ファイルを開くモード
- *  @param[in] err_mode modeでファイルを開けなかった場合に開くモード
- *  @return 成功したときはtrueを返す。
- *  失敗したときはfalseを返す。
- */
-bool Rigel::OpenData(std::fstream& data_io,
-                     int file_index,
-                     const char* mode,
-                     const char* err_mode) {
-  char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
-  std::snprintf(filename, sizeof(filename), "%s/%s.%04d",
-                this->dirname_, this->key_, file_index);
-
-  if (data_io.is_open()) {
-    data_io.close();
+  if (idx->pos != index || idx->last_op != op) {
+    idx->stream.clear();
+    idx->stream.seekg(index, std::ios::beg);
+    idx->stream.seekp(index, std::ios::beg);
   }
-  data_io.clear();
-  data_io.open(filename, ModeFromString(mode));
-  if (!data_io.is_open()) {
-    data_io.clear();
-    data_io.open(filename, ModeFromString(err_mode));
-    if (!data_io.is_open()) {
-      std::fprintf(stderr, "ERROR Rigel::Open filename=%s\n", filename);
-      return false;
-    }
-  }
-  return true;
-}
+  idx->pos = index;
+  idx->last_op = op;
 
-/**
- *  @brief インデックスファイルを開く。
- *
- *  @param[in] index_io インデックス関連のファイルを扱うクラス
- *  @param[in] mode ファイルを開くモード
- *  @param[in] err_mode modeでファイルを開けなかった場合に開くモード
- *  @return 成功したときはtrueを返す。
- *  失敗したときはfalseを返す。
- */
-bool Rigel::OpenIndex(std::fstream& index_io,
-                      const char* mode,
-                      const char* err_mode) {
-  char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
-  std::snprintf(filename, sizeof(filename), "%s/%s.index",
-                this->dirname_, this->key_);
-
-  if (index_io.is_open()) {
-    index_io.close();
-  }
-  index_io.clear();
-  index_io.open(filename, ModeFromString(mode));
-  if (!index_io.is_open()) {
-    index_io.clear();
-    index_io.open(filename, ModeFromString(err_mode));
-    if (!index_io.is_open()) {
-      return false;
-    }
-  }
+  *data_io = data;
+  *index_io = idx;
   return true;
 }
 
@@ -179,12 +177,20 @@ bool Rigel::OpenIndex(std::fstream& index_io,
 ssize_t Rigel::Write(const int index,
                      const unsigned char* data,
                      size_t size) {
-  std::fstream data_io, index_io;
-  if(this->Open(index, data_io, index_io, "r+b", "w+b")) {
-    data_io.write(reinterpret_cast<const char*>(data), size);
-    ssize_t ret = data_io.fail() ? -1 : (ssize_t)size;
+  Handle *data_io, *index_io;
+  if (this->Open(index, kOpWrite, &data_io, &index_io)) {
+    data_io->stream.write(reinterpret_cast<const char*>(data), size);
+    bool ok = !data_io->stream.fail();
+    data_io->stream.clear();
+    data_io->pos = ok ? (data_io->pos + (long long)size) : -1;
+    ssize_t ret = ok ? (ssize_t)size : -1;
+
     char c = 1;
-    index_io.write(&c,1);
+    index_io->stream.write(&c,1);
+    bool idx_ok = !index_io->stream.fail();
+    index_io->stream.clear();
+    index_io->pos = idx_ok ? (index_io->pos + 1) : -1;
+
     return ret;
   }
   return -1;
@@ -202,13 +208,19 @@ ssize_t Rigel::Write(const int index,
 ssize_t Rigel::Read(const int index,
                     unsigned char* data,
                     size_t size) {
-  std::fstream data_io, index_io;
-  if (this->Open(index, data_io, index_io, "rb", "rb")) {
+  Handle *data_io, *index_io;
+  if (this->Open(index, kOpRead, &data_io, &index_io)) {
     char c = 0;
-    index_io.read(&c,1);
-    if (index_io.gcount() == 1 && c == 1) {
-      data_io.read(reinterpret_cast<char*>(data), size);
-      std::streamsize n = data_io.gcount();
+    index_io->stream.read(&c,1);
+    bool index_ok = (index_io->stream.gcount() == 1);
+    index_io->stream.clear();
+    index_io->pos = index_ok ? (index_io->pos + 1) : -1;
+
+    if (index_ok && c == 1) {
+      data_io->stream.read(reinterpret_cast<char*>(data), size);
+      std::streamsize n = data_io->stream.gcount();
+      data_io->stream.clear();
+      data_io->pos = (n > 0) ? (data_io->pos + n) : -1;
       return n > 0 ? (ssize_t)n : -1;
     }
   }
@@ -222,15 +234,24 @@ ssize_t Rigel::Read(const int index,
  *  失敗したときはfalseを返す。
  */
 bool Rigel::ScanInit(const int start) {
-  if (this->OpenIndex(this->scan_io,"rb","rb")) {
-    this->scan_io.seekg(0, std::ios::beg);
-    this->scan_index_ = 0;
-    this->scan_offset_ = 0;
-    this->scan_io.read(this->scan_buf_, BUF_SIZE);
-    this->scan_size_ = (int)this->scan_io.gcount();
-    return true;
+  if (this->scan_io.is_open()) {
+    this->scan_io.close();
   }
-  return false;
+  this->scan_io.clear();
+
+  char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
+  this->IndexFilename(filename, sizeof(filename));
+  this->scan_io.open(filename, std::ios::in | std::ios::binary);
+  if (!this->scan_io.is_open()) {
+    return false;
+  }
+
+  this->scan_io.seekg(0, std::ios::beg);
+  this->scan_index_ = 0;
+  this->scan_offset_ = 0;
+  this->scan_io.read(this->scan_buf_, BUF_SIZE);
+  this->scan_size_ = (int)this->scan_io.gcount();
+  return true;
 }
 
 /**
