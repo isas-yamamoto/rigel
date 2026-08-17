@@ -65,73 +65,15 @@ reading/scanning it.
 
 ## Building
 
-Requires C++11 or later (uses `std::mutex`, `std::unordered_map`,
-`std::thread`).
-
-**Plain Makefile** (`src/Makefile` - what CI's main build/test/sanitizer/
-cppcheck jobs use):
+Requires C++11 or later. Quick start (CMake):
 
 ```sh
-cd src
-make               # builds the library, the rigel CLI, and the test suite
-make check         # runs the test suite
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 ```
 
-**CMake** (`CMakeLists.txt` at the repo root - also what CI verifies, and
-the path that produces a pkg-config file and a properly SONAME'd shared
-library):
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-ctest --test-dir build --output-on-failure
-```
-
-Build outputs (same for either build system):
-
-| kind | name |
-|---|---|
-| shared library | `librigel.so` |
-| static library | `librigel.a` |
-| headers | `rigel.h` (C++), `rigel_c.h` (C) |
-| CLI tool | `rigel` (subcommands: `init`, `read`, `write`, `delete`, `scan`, `stat`, `freeze`, `unfreeze`, `version`) |
-| test suites | `test`/`test_c` (Makefile) / `rigel_test`/`rigel_test_c` (CMake) |
-
-## Installing
-
-**Makefile:**
-
-```sh
-make install PREFIX=/usr/local     # PREFIX defaults to /usr/local
-make uninstall PREFIX=/usr/local
-```
-
-`DESTDIR` is also honored for staged installs.
-
-**CMake** (also generates a pkg-config file; set `CMAKE_INSTALL_PREFIX`
-at configure time so it's reflected correctly in the generated
-`rigel.pc`):
-
-```sh
-cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr/local
-cmake --build build -j
-cmake --install build
-```
-
-Once installed, a consumer can pick up the right flags with:
-
-```sh
-pkg-config --cflags --libs rigel
-```
-
-## API docs
-
-Generate Doxygen HTML/LaTeX docs from `rigel.h`/`rigel.cc` (run from the
-repo root, needs `doxygen`):
-
-```sh
-doxygen docs/doxygen.conf   # writes docs/html and docs/latex
-```
+See [docs/BUILDING.md](docs/BUILDING.md) for the plain-Makefile build,
+installing (`make install`/`cmake --install`, pkg-config), and
+generating API docs with Doxygen.
 
 ## Usage
 
@@ -256,33 +198,14 @@ rigel.Rigel.set_frozen("/path/to/data", True)    # blocks further write()/delete
 r.close()                                        # or use `with rigel.Rigel(...) as r:`
 ```
 
-## Tests
+## Tests & CI
 
-- `tests/test.cc`: a functional test covering Write/Read consistency,
-  splitting across multiple files, Scan enumeration, safe failure on
-  out-of-range indices, `Init(dirname)` via metadata, and concurrent
-  Write/Read from multiple threads (run via `make check`).
-- `tests/test_c.c`: compiled as plain C, exercises `rigel_c.h` to prove
-  it's actually callable from C (also run via `make check`).
-- `tests/test_python.py`: exercises `python/rigel.py` against a real
-  built `librigel` (`RIGEL_LIBRARY_PATH=/path/to/librigel.so python3
-  tests/test_python.py`); run by the `cmake-build` CI job after install.
-- Also verified with ThreadSanitizer and AddressSanitizer+UBSan (see the
-  CI jobs below for the exact build commands) - functional tests alone
-  can't tell whether a race or memory-safety issue exists.
-
-## CI
-
-`.github/workflows/ci.yml` runs all of the following on every push/PR:
-
-| job | what it does |
-|---|---|
-| `build-and-test` | normal build + `make check` |
-| `strict-warnings` | rebuilds with `-Wall -Wextra -Werror` (warnings fail the build) |
-| `thread-sanitizer` | catches races with ThreadSanitizer |
-| `address-ub-sanitizer` | catches memory-safety/UB issues with AddressSanitizer+UBSan |
-| `cmake-build` | configure/build/test/install via CMake, then sanity-checks the installed pkg-config file and binary |
-| `cppcheck` | static analysis (`warning`/`performance`/`portability` categories; fails on any finding) |
+`ctest --test-dir build` (CMake) or `make check` (Makefile, in `src/`)
+runs the full test suite (C++, C, and - after an install - Python).
+Every push/PR also runs strict-warnings, ThreadSanitizer,
+AddressSanitizer+UBSan, and cppcheck builds. See
+[docs/TESTING.md](docs/TESTING.md) for what each test file covers and
+the full CI job matrix.
 
 ## Thread safety
 
