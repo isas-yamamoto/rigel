@@ -97,6 +97,7 @@ class Rigel:
 
     def __init__(self, dirname, key=None, block_size=None,
                  max_file_count=None, index_offset=0):
+        self._dirname = dirname
         self._handle = _lib.rigel_c_create()
         if key is None:
             if not _lib.rigel_c_init_from_meta(self._handle, dirname.encode()):
@@ -138,6 +139,46 @@ class Rigel:
             if idx < 0:
                 return
             yield idx
+
+    def stat(self):
+        """Mirrors `rigel stat <dir>`: key/geometry/usage info as a dict."""
+        block_size = self.block_size
+        max_file_count = self.max_file_count
+        record_count = 0
+        min_index = max_index = None
+        for idx in self.scan():
+            record_count += 1
+            if min_index is None:
+                min_index = idx
+            max_index = idx
+
+        key = self.key
+        key_prefix = key + "."
+        shard_count = 0
+        shard_bytes = 0
+        for name in os.listdir(self._dirname):
+            suffix = name[len(key_prefix):]
+            if (len(name) == len(key_prefix) + 4 and
+                    name.startswith(key_prefix) and suffix.isdigit()):
+                shard_count += 1
+                shard_bytes += os.stat(os.path.join(self._dirname, name)).st_size
+
+        index_path = os.path.join(self._dirname, key + ".index")
+        index_bytes = os.stat(index_path).st_size if os.path.exists(index_path) else 0
+
+        return {
+            "key": key,
+            "block_size": block_size,
+            "max_file_count": max_file_count,
+            "max_file_size": block_size * max_file_count,
+            "index_offset": self.index_offset,
+            "record_count": record_count,
+            "min_index": min_index,
+            "max_index": max_index,
+            "shard_count": shard_count,
+            "shard_bytes": shard_bytes,
+            "index_bytes": index_bytes,
+        }
 
     def last_error(self):
         err = _lib.rigel_c_last_error(self._handle)
