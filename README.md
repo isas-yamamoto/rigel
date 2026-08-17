@@ -91,6 +91,15 @@ Once installed, a consumer can pick up the right flags with:
 pkg-config --cflags --libs rigel
 ```
 
+## API docs
+
+Generate Doxygen HTML/LaTeX docs from `rigel.h`/`rigel.cc` (run from the
+repo root, needs `doxygen`):
+
+```sh
+doxygen docs/doxygen.conf   # writes docs/html and docs/latex
+```
+
 ## Usage
 
 First, initialize the directory with `rigel init` (once):
