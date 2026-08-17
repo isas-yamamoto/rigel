@@ -86,6 +86,10 @@ jobs:
           PKG_CONFIG_PATH=${{ runner.temp }}/rigel-install/lib/pkgconfig pkg-config --cflags --libs rigel
           LD_LIBRARY_PATH=${{ runner.temp }}/rigel-install/lib ${{ runner.temp }}/rigel-install/bin/rigel version
 
+      - name: Run Python wrapper smoke test
+        run: |
+          RIGEL_LIBRARY_PATH=${{ runner.temp }}/rigel-install/lib/librigel.so python3 tests/test_python.py
+
   cppcheck:
     runs-on: ubuntu-latest
     defaults:

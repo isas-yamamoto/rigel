@@ -190,6 +190,26 @@ ssize_t n = rigel_c_read(h, index, rbuf, sizeof(rbuf));  // -1 if never written
 rigel_c_destroy(h);
 ```
 
+### From Python
+
+`python/rigel.py` is a `ctypes` wrapper around `rigel_c.h` - no
+compiled extension, just loads `librigel` at import time (via the
+system loader after `make install`/`cmake --install`, or
+`RIGEL_LIBRARY_PATH` pointing at a not-yet-installed build's `.so`):
+
+```python
+import rigel
+
+r = rigel.Rigel("/path/to/data")               # reads existing rigel.meta
+# or: r = rigel.Rigel("/path/to/data", key="mykey", block_size=1024, max_file_count=131072)
+
+r.write(index, b"hello")
+data = r.read(index)                            # None if never written
+for idx in r.scan():
+    ...                                          # a record exists at idx
+r.close()                                        # or use `with rigel.Rigel(...) as r:`
+```
+
 ## Tests
 
 - `tests/test.cc`: a functional test covering Write/Read consistency,
@@ -198,6 +218,9 @@ rigel_c_destroy(h);
   Write/Read from multiple threads (run via `make check`).
 - `tests/test_c.c`: compiled as plain C, exercises `rigel_c.h` to prove
   it's actually callable from C (also run via `make check`).
+- `tests/test_python.py`: exercises `python/rigel.py` against a real
+  built `librigel` (`RIGEL_LIBRARY_PATH=/path/to/librigel.so python3
+  tests/test_python.py`); run by the `cmake-build` CI job after install.
 - Also verified with ThreadSanitizer and AddressSanitizer+UBSan (see the
   CI jobs below for the exact build commands) - functional tests alone
   can't tell whether a race or memory-safety issue exists.
