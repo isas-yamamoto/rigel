@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include "rigel.h"
 
 namespace rigel
@@ -253,6 +255,59 @@ void Rigel::SetError(const char* fmt, ...) {
 const char* Rigel::LastError() const {
   std::lock_guard<std::mutex> lock(this->mutex_);
   return this->last_error_;
+}
+
+bool Rigel::GetStat(Stat* out) {
+  std::memset(out, 0, sizeof(*out));
+  out->block_size = this->BlockSize();
+  out->max_file_count = this->MaxFileCount();
+  out->max_file_size = (unsigned long long)out->block_size * out->max_file_count;
+  out->index_offset = this->IndexOffset();
+  out->min_index = -1;
+  out->max_index = -1;
+
+  if (!this->ScanInit(0)) {
+    return false;
+  }
+  int idx;
+  while ((idx = this->ScanNext()) >= 0) {
+    out->record_count++;
+    if (out->min_index < 0) {
+      out->min_index = idx;
+    }
+    out->max_index = idx;
+  }
+
+  // Tally shard files (<key>.NNNN) and the index file on disk.
+  std::string key_prefix = std::string(this->key_) + ".";
+  DIR* d = ::opendir(this->dirname_);
+  if (d != NULL) {
+    struct dirent* ent;
+    while ((ent = ::readdir(d)) != NULL) {
+      std::string name(ent->d_name);
+      if (name.size() == key_prefix.size() + 4 &&
+          name.compare(0, key_prefix.size(), key_prefix) == 0 &&
+          name.find_first_not_of("0123456789", key_prefix.size()) == std::string::npos) {
+        char path[MAXPATHLEN + MAX_KEY_SIZE + 32];
+        std::snprintf(path, sizeof(path), "%s/%s", this->dirname_, name.c_str());
+        struct stat st;
+        if (::stat(path, &st) == 0) {
+          out->shard_count++;
+          out->shard_bytes += (unsigned long long)st.st_size;
+        }
+      }
+    }
+    ::closedir(d);
+  }
+
+  char index_path[MAXPATHLEN + MAX_KEY_SIZE + 32];
+  this->IndexFilename(index_path, sizeof(index_path));
+  struct stat ist;
+  if (::stat(index_path, &ist) == 0) {
+    out->index_bytes = (unsigned long long)ist.st_size;
+  }
+
+  return true;
 }
 
 void Rigel::DataFilename(int file_index, char* buf, size_t buflen) const {

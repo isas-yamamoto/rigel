@@ -15,8 +15,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <dirent.h>
-#include <string>
 #include <sys/stat.h>
 #include <vector>
 
@@ -189,70 +187,24 @@ int CmdStat(int argc, char** argv) {
     return 1;
   }
 
-  int block_size = rigel.BlockSize();
-  int max_file_count = rigel.MaxFileCount();
-  unsigned long long max_file_size = (unsigned long long)block_size * max_file_count;
+  rigel::Rigel::Stat st;
+  if (!rigel.GetStat(&st)) {
+    std::fprintf(stderr, "rigel stat: %s\n", rigel.LastError());
+    return 1;
+  }
 
   std::printf("key:             %s\n", rigel.Key());
-  std::printf("block_size:      %d\n", block_size);
-  std::printf("max_file_count:  %d\n", max_file_count);
-  std::printf("max_file_size:   %llu bytes\n", max_file_size);
-  std::printf("index_offset:    %d\n", rigel.IndexOffset());
-
-  // Count records and find the index range by scanning the index file.
-  long long record_count = 0;
-  int min_index = -1, max_index = -1;
-  if (rigel.ScanInit()) {
-    int idx;
-    while ((idx = rigel.ScanNext()) >= 0) {
-      record_count++;
-      if (min_index < 0) {
-        min_index = idx;
-      }
-      max_index = idx;
-    }
+  std::printf("block_size:      %d\n", st.block_size);
+  std::printf("max_file_count:  %d\n", st.max_file_count);
+  std::printf("max_file_size:   %llu bytes\n", st.max_file_size);
+  std::printf("index_offset:    %d\n", st.index_offset);
+  std::printf("records:         %lld\n", st.record_count);
+  if (st.record_count > 0) {
+    std::printf("index range:     %d..%d\n", st.min_index, st.max_index);
   }
-  std::printf("records:         %lld\n", record_count);
-  if (record_count > 0) {
-    std::printf("index range:     %d..%d\n", min_index, max_index);
-  }
-
-  // Tally shard files (<key>.NNNN) and the index file on disk.
-  int shard_count = 0;
-  unsigned long long shard_bytes = 0;
-  std::string key_prefix = std::string(rigel.Key()) + ".";
-
-  DIR* d = ::opendir(dirname);
-  if (d != NULL) {
-    struct dirent* ent;
-    while ((ent = ::readdir(d)) != NULL) {
-      std::string name(ent->d_name);
-      if (name.size() == key_prefix.size() + 4 &&
-          name.compare(0, key_prefix.size(), key_prefix) == 0 &&
-          name.find_first_not_of("0123456789", key_prefix.size()) == std::string::npos) {
-        char path[MAXPATHLEN];
-        std::snprintf(path, sizeof(path), "%s/%s", dirname, name.c_str());
-        struct stat st;
-        if (::stat(path, &st) == 0) {
-          shard_count++;
-          shard_bytes += (unsigned long long)st.st_size;
-        }
-      }
-    }
-    ::closedir(d);
-  }
-
-  char index_path[MAXPATHLEN + rigel::MAX_KEY_SIZE + 32];
-  std::snprintf(index_path, sizeof(index_path), "%s/%s.index", dirname, rigel.Key());
-  unsigned long long index_bytes = 0;
-  struct stat ist;
-  if (::stat(index_path, &ist) == 0) {
-    index_bytes = (unsigned long long)ist.st_size;
-  }
-
-  std::printf("shard files:     %d\n", shard_count);
-  std::printf("shard bytes:     %llu\n", shard_bytes);
-  std::printf("index file bytes: %llu\n", index_bytes);
+  std::printf("shard files:     %d\n", st.shard_count);
+  std::printf("shard bytes:     %llu\n", st.shard_bytes);
+  std::printf("index file bytes: %llu\n", st.index_bytes);
 
   return 0;
 }

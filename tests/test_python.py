@@ -38,6 +38,14 @@ def main():
     r.write(1001, b"Y" * 8)
     check(list(r.scan()) == [1000, 1001], "scan returns offset-shifted indices in order")
 
+    st = r.stat()
+    check(st["key"] == "py", "stat() reports key")
+    check(st["block_size"] == 8, "stat() reports block_size")
+    check(st["record_count"] == 2, "stat() reports record_count")
+    check((st["min_index"], st["max_index"]) == (1000, 1001), "stat() reports index range")
+    check(st["shard_count"] >= 1, "stat() reports at least one shard file")
+    check(st["index_bytes"] > 0, "stat() reports a non-zero index file size")
+
     check(r.delete(1000), "delete succeeds")
     check(r.read(1000) is None, "read returns None after delete")
     check(list(r.scan()) == [1001], "scan skips the deleted index")

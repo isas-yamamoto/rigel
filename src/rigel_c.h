@@ -67,6 +67,26 @@ const char* rigel_c_key(const RigelHandle* h);
 int rigel_c_max_file_count(const RigelHandle* h);
 int rigel_c_index_offset(const RigelHandle* h);
 
+/* Snapshot of key/geometry/usage info, as printed by `rigel stat`. Mirrors
+ * rigel::Rigel::Stat. */
+typedef struct RigelCStat {
+  int block_size;
+  int max_file_count;
+  unsigned long long max_file_size;
+  int index_offset;
+  long long record_count;
+  int min_index; /* -1 if record_count == 0 */
+  int max_index; /* -1 if record_count == 0 */
+  int shard_count;
+  unsigned long long shard_bytes;
+  unsigned long long index_bytes;
+} RigelCStat;
+
+/* Fills *out with a full stat snapshot in one native call (no per-record
+ * round trip through the caller's language). Returns 1 on success, 0 on
+ * failure (see rigel_c_last_error()). */
+int rigel_c_stat(RigelHandle* h, RigelCStat* out);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

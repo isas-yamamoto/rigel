@@ -72,4 +72,22 @@ int rigel_c_index_offset(const RigelHandle* h) {
   return h->impl.IndexOffset();
 }
 
+int rigel_c_stat(RigelHandle* h, RigelCStat* out) {
+  rigel::Rigel::Stat st;
+  if (!h->impl.GetStat(&st)) {
+    return 0;
+  }
+  out->block_size = st.block_size;
+  out->max_file_count = st.max_file_count;
+  out->max_file_size = st.max_file_size;
+  out->index_offset = st.index_offset;
+  out->record_count = st.record_count;
+  out->min_index = st.min_index;
+  out->max_index = st.max_index;
+  out->shard_count = st.shard_count;
+  out->shard_bytes = st.shard_bytes;
+  out->index_bytes = st.index_bytes;
+  return 1;
+}
+
 } // extern "C"

@@ -90,6 +90,26 @@ _lib.rigel_c_index_offset.restype = ctypes.c_int
 _lib.rigel_c_index_offset.argtypes = [ctypes.c_void_p]
 
 
+class RigelCStat(ctypes.Structure):
+    """Mirrors struct RigelCStat in rigel_c.h."""
+    _fields_ = [
+        ("block_size", ctypes.c_int),
+        ("max_file_count", ctypes.c_int),
+        ("max_file_size", ctypes.c_ulonglong),
+        ("index_offset", ctypes.c_int),
+        ("record_count", ctypes.c_longlong),
+        ("min_index", ctypes.c_int),
+        ("max_index", ctypes.c_int),
+        ("shard_count", ctypes.c_int),
+        ("shard_bytes", ctypes.c_ulonglong),
+        ("index_bytes", ctypes.c_ulonglong),
+    ]
+
+
+_lib.rigel_c_stat.restype = ctypes.c_int
+_lib.rigel_c_stat.argtypes = [ctypes.c_void_p, ctypes.POINTER(RigelCStat)]
+
+
 class Rigel:
     """A Rigel data directory. Pass only `dirname` to read its existing
     rigel.meta; pass `key` too to initialize directly (mirrors
@@ -97,7 +117,6 @@ class Rigel:
 
     def __init__(self, dirname, key=None, block_size=None,
                  max_file_count=None, index_offset=0):
-        self._dirname = dirname
         self._handle = _lib.rigel_c_create()
         if key is None:
             if not _lib.rigel_c_init_from_meta(self._handle, dirname.encode()):
@@ -141,43 +160,27 @@ class Rigel:
             yield idx
 
     def stat(self):
-        """Mirrors `rigel stat <dir>`: key/geometry/usage info as a dict."""
-        block_size = self.block_size
-        max_file_count = self.max_file_count
-        record_count = 0
-        min_index = max_index = None
-        for idx in self.scan():
-            record_count += 1
-            if min_index is None:
-                min_index = idx
-            max_index = idx
+        """Mirrors `rigel stat <dir>`: key/geometry/usage info as a dict.
 
-        key = self.key
-        key_prefix = key + "."
-        shard_count = 0
-        shard_bytes = 0
-        for name in os.listdir(self._dirname):
-            suffix = name[len(key_prefix):]
-            if (len(name) == len(key_prefix) + 4 and
-                    name.startswith(key_prefix) and suffix.isdigit()):
-                shard_count += 1
-                shard_bytes += os.stat(os.path.join(self._dirname, name)).st_size
-
-        index_path = os.path.join(self._dirname, key + ".index")
-        index_bytes = os.stat(index_path).st_size if os.path.exists(index_path) else 0
-
+        Gathered in one native call (record scan + shard/index file tally
+        all done in C++) rather than looping over scan() in Python, which
+        would pay a ctypes round-trip per record.
+        """
+        st = RigelCStat()
+        if not _lib.rigel_c_stat(self._handle, ctypes.byref(st)):
+            raise RigelError(self.last_error() or "GetStat failed")
         return {
-            "key": key,
-            "block_size": block_size,
-            "max_file_count": max_file_count,
-            "max_file_size": block_size * max_file_count,
-            "index_offset": self.index_offset,
-            "record_count": record_count,
-            "min_index": min_index,
-            "max_index": max_index,
-            "shard_count": shard_count,
-            "shard_bytes": shard_bytes,
-            "index_bytes": index_bytes,
+            "key": self.key,
+            "block_size": st.block_size,
+            "max_file_count": st.max_file_count,
+            "max_file_size": st.max_file_size,
+            "index_offset": st.index_offset,
+            "record_count": st.record_count,
+            "min_index": st.min_index if st.record_count > 0 else None,
+            "max_index": st.max_index if st.record_count > 0 else None,
+            "shard_count": st.shard_count,
+            "shard_bytes": st.shard_bytes,
+            "index_bytes": st.index_bytes,
         }
 
     def last_error(self):
