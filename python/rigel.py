@@ -89,6 +89,12 @@ _lib.rigel_c_max_file_count.argtypes = [ctypes.c_void_p]
 _lib.rigel_c_index_offset.restype = ctypes.c_int
 _lib.rigel_c_index_offset.argtypes = [ctypes.c_void_p]
 
+_lib.rigel_c_frozen.restype = ctypes.c_int
+_lib.rigel_c_frozen.argtypes = [ctypes.c_void_p]
+
+_lib.rigel_c_set_frozen.restype = ctypes.c_int
+_lib.rigel_c_set_frozen.argtypes = [ctypes.c_char_p, ctypes.c_int]
+
 
 class RigelCStat(ctypes.Structure):
     """Mirrors struct RigelCStat in rigel_c.h."""
@@ -103,6 +109,7 @@ class RigelCStat(ctypes.Structure):
         ("shard_count", ctypes.c_int),
         ("shard_bytes", ctypes.c_ulonglong),
         ("index_bytes", ctypes.c_ulonglong),
+        ("frozen", ctypes.c_int),
     ]
 
 
@@ -137,6 +144,15 @@ class Rigel:
                     max_file_count=DEFAULT_MAX_FILE_COUNT, index_offset=0):
         return bool(_lib.rigel_c_write_meta(
             dirname.encode(), key.encode(), block_size, max_file_count, index_offset))
+
+    @staticmethod
+    def set_frozen(dirname, frozen):
+        """Flips the frozen flag on an already-initialized directory in
+        place (see rigel::Rigel::SetFrozen). A frozen directory still
+        allows read()/scan() but write()/delete() fail - guards finished,
+        archival data against an accidental write. Returns False if
+        dirname has no valid metadata to read."""
+        return bool(_lib.rigel_c_set_frozen(dirname.encode(), 1 if frozen else 0))
 
     def write(self, index, data):
         return _lib.rigel_c_write(self._handle, index, data, len(data))
@@ -181,6 +197,7 @@ class Rigel:
             "shard_count": st.shard_count,
             "shard_bytes": st.shard_bytes,
             "index_bytes": st.index_bytes,
+            "frozen": bool(st.frozen),
         }
 
     def last_error(self):
@@ -202,6 +219,10 @@ class Rigel:
     @property
     def index_offset(self):
         return _lib.rigel_c_index_offset(self._handle)
+
+    @property
+    def frozen(self):
+        return bool(_lib.rigel_c_frozen(self._handle))
 
     def close(self):
         if self._handle is not None:

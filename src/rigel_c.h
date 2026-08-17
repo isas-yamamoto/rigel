@@ -39,9 +39,15 @@ void rigel_c_init(RigelHandle* h, const char* dirname, const char* key,
 int rigel_c_init_from_meta(RigelHandle* h, const char* dirname);
 
 /* Writes key/block_size/max_file_count/index_offset as metadata under
- * dirname. Returns 1 on success, 0 on failure. */
+ * dirname (frozen defaults to false; use rigel_c_set_frozen() to freeze an
+ * already-initialized directory). Returns 1 on success, 0 on failure. */
 int rigel_c_write_meta(const char* dirname, const char* key,
                         int block_size, int max_file_count, int index_offset);
+
+/* Flips the frozen flag on an already-initialized directory's rigel.meta
+ * in place (see rigel::Rigel::SetFrozen). Returns 1 on success, 0 if
+ * dirname has no valid metadata to read. */
+int rigel_c_set_frozen(const char* dirname, int frozen);
 
 /* Returns the number of bytes written on success, -1 on failure. */
 ssize_t rigel_c_write(RigelHandle* h, int index, const unsigned char* data, size_t size);
@@ -66,6 +72,8 @@ int rigel_c_block_size(const RigelHandle* h);
 const char* rigel_c_key(const RigelHandle* h);
 int rigel_c_max_file_count(const RigelHandle* h);
 int rigel_c_index_offset(const RigelHandle* h);
+/* 1 if the directory is frozen (Write/Delete fail), 0 otherwise. */
+int rigel_c_frozen(const RigelHandle* h);
 
 /* Snapshot of key/geometry/usage info, as printed by `rigel stat`. Mirrors
  * rigel::Rigel::Stat. */
@@ -80,6 +88,7 @@ typedef struct RigelCStat {
   int shard_count;
   unsigned long long shard_bytes;
   unsigned long long index_bytes;
+  int frozen; /* 1 if the directory is frozen, 0 otherwise */
 } RigelCStat;
 
 /* Fills *out with a full stat snapshot in one native call (no per-record

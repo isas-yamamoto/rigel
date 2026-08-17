@@ -81,6 +81,54 @@ bool IsValidKey(const char* key) {
   }
   return true;
 }
+
+// Shared by Init(dirname) and SetFrozen(): reads dirname/rigel.meta into
+// the given fields. block_size/max_file_count default to BLOCK_SIZE/
+// MAX_FILE_COUNT and index_offset/frozen default to 0/false if absent
+// (metadata predating that field). Returns false (with errno set from the
+// fopen failure) if the file doesn't exist.
+bool ReadMetaFile(const char* dirname, char* key, size_t key_len,
+                   int* block_size, int* max_file_count, int* index_offset,
+                   bool* frozen) {
+  char filename[MAXPATHLEN + 32];
+  std::snprintf(filename, sizeof(filename), "%s/%s", dirname, META_FILENAME);
+
+  FILE* f = std::fopen(filename, "r");
+  if (f == NULL) {
+    return false;
+  }
+
+  key[0] = '\0';
+  *block_size = BLOCK_SIZE;
+  *max_file_count = MAX_FILE_COUNT;
+  *index_offset = 0;
+  *frozen = false;
+
+  char line[512];
+  while (std::fgets(line, sizeof(line), f) != NULL) {
+    if (line[0] == '#') {
+      continue; // comment line, even one containing "key=" or similar
+    }
+    char name[64];
+    char value[448];
+    if (std::sscanf(line, "%63[^=]=%447[^\n]", name, value) == 2) {
+      if (std::strcmp(name, "key") == 0) {
+        std::strncpy(key, value, key_len-1);
+        key[key_len-1] = '\0';
+      } else if (std::strcmp(name, "block_size") == 0) {
+        *block_size = std::atoi(value);
+      } else if (std::strcmp(name, "max_file_count") == 0) {
+        *max_file_count = std::atoi(value);
+      } else if (std::strcmp(name, "index_offset") == 0) {
+        *index_offset = std::atoi(value);
+      } else if (std::strcmp(name, "frozen") == 0) {
+        *frozen = std::atoi(value) != 0;
+      }
+    }
+  }
+  std::fclose(f);
+  return true;
+}
 }
 
 /**
@@ -91,6 +139,7 @@ Rigel::Rigel()
   : block_size_(0),
     max_file_size_(0),
     index_offset_(0),
+    frozen_(false),
     scan_pos_(0) {
   this->dirname_[0] = '\0';
   this->key_[0] = '\0';
@@ -136,6 +185,7 @@ void Rigel::Init(const char* dirname,
   this->block_size_ = block_size;
   this->max_file_size_ = (unsigned long long)max_file_count * block_size;
   this->index_offset_ = index_offset;
+  this->frozen_ = false;
 
   std::strncpy(this->dirname_, dirname, MAXPATHLEN-1);
   this->dirname_[MAXPATHLEN-1] = '\0';
@@ -153,49 +203,23 @@ void Rigel::Init(const char* dirname,
  *  false if the metadata is missing or malformed.
  */
 bool Rigel::Init(const char* dirname) {
-  char filename[MAXPATHLEN + 32];
-  std::snprintf(filename, sizeof(filename), "%s/%s", dirname, META_FILENAME);
-
-  FILE* f = std::fopen(filename, "r");
-  if (f == NULL) {
-    this->SetError("Init: metadata not found (%s): %s", filename, std::strerror(errno));
+  char key[MAX_KEY_SIZE];
+  int block_size, max_file_count, index_offset;
+  bool frozen;
+  if (!ReadMetaFile(dirname, key, sizeof(key), &block_size, &max_file_count,
+                     &index_offset, &frozen)) {
+    this->SetError("Init: metadata not found (%s/%s): %s", dirname, META_FILENAME,
+                    std::strerror(errno));
     return false;
   }
 
-  char key[MAX_KEY_SIZE];
-  key[0] = '\0';
-  int block_size = BLOCK_SIZE;
-  int max_file_count = MAX_FILE_COUNT;
-  int index_offset = 0; // absent in metadata predating this field
-
-  char line[512];
-  while (std::fgets(line, sizeof(line), f) != NULL) {
-    if (line[0] == '#') {
-      continue; // comment line, even one containing "key=" or similar
-    }
-    char name[64];
-    char value[448];
-    if (std::sscanf(line, "%63[^=]=%447[^\n]", name, value) == 2) {
-      if (std::strcmp(name, "key") == 0) {
-        std::strncpy(key, value, MAX_KEY_SIZE-1);
-        key[MAX_KEY_SIZE-1] = '\0';
-      } else if (std::strcmp(name, "block_size") == 0) {
-        block_size = std::atoi(value);
-      } else if (std::strcmp(name, "max_file_count") == 0) {
-        max_file_count = std::atoi(value);
-      } else if (std::strcmp(name, "index_offset") == 0) {
-        index_offset = std::atoi(value);
-      }
-    }
-  }
-  std::fclose(f);
-
   if (!IsValidKey(key) || block_size <= 0 || max_file_count <= 0) {
-    this->SetError("Init: invalid metadata in %s", filename);
+    this->SetError("Init: invalid metadata in %s/%s", dirname, META_FILENAME);
     return false;
   }
 
   this->Init(dirname, key, block_size, max_file_count, index_offset);
+  this->frozen_ = frozen;
   return true;
 }
 
@@ -208,7 +232,8 @@ bool Rigel::WriteMeta(const char* dirname,
                       const char* key,
                       const int block_size,
                       const int max_file_count,
-                      const int index_offset) {
+                      const int index_offset,
+                      const bool frozen) {
   if (!IsValidKey(key)) {
     std::fprintf(stderr,
                   "Rigel::WriteMeta: invalid key \"%s\" (must be non-empty and contain only "
@@ -232,8 +257,27 @@ bool Rigel::WriteMeta(const char* dirname,
   std::fprintf(f, "block_size=%d\n", block_size);
   std::fprintf(f, "max_file_count=%d\n", max_file_count);
   std::fprintf(f, "index_offset=%d\n", index_offset);
+  std::fprintf(f, "frozen=%d\n", frozen ? 1 : 0);
   std::fclose(f);
   return true;
+}
+
+/**
+ *  @brief Flips the frozen flag on an already-initialized directory in
+ *  place, leaving key/block_size/max_file_count/index_offset untouched.
+ *
+ *  @return false if dirname has no valid metadata to read.
+ */
+bool Rigel::SetFrozen(const char* dirname, bool frozen) {
+  char key[MAX_KEY_SIZE];
+  int block_size, max_file_count, index_offset;
+  bool current_frozen; // unused; overwritten by the requested value below
+  if (!ReadMetaFile(dirname, key, sizeof(key), &block_size, &max_file_count,
+                     &index_offset, &current_frozen) ||
+      !IsValidKey(key) || block_size <= 0 || max_file_count <= 0) {
+    return false;
+  }
+  return WriteMeta(dirname, key, block_size, max_file_count, index_offset, frozen);
 }
 
 /**
@@ -263,6 +307,7 @@ bool Rigel::GetStat(Stat* out) {
   out->max_file_count = this->MaxFileCount();
   out->max_file_size = (unsigned long long)out->block_size * out->max_file_count;
   out->index_offset = this->IndexOffset();
+  out->frozen = this->frozen_;
   out->min_index = -1;
   out->max_index = -1;
 
@@ -504,6 +549,11 @@ ssize_t Rigel::Write(const int index,
                      size_t size) {
   std::lock_guard<std::mutex> lock(this->mutex_);
 
+  if (this->frozen_) {
+    this->SetError("Write: directory is frozen (see Rigel::SetFrozen)");
+    return -1;
+  }
+
   int idx = index - this->index_offset_;
   if (idx < 0) {
     this->SetError("Write: index %d is below index_offset %d", index, this->index_offset_);
@@ -554,6 +604,11 @@ ssize_t Rigel::Write(const int index,
  */
 bool Rigel::Delete(const int index) {
   std::lock_guard<std::mutex> lock(this->mutex_);
+
+  if (this->frozen_) {
+    this->SetError("Delete: directory is frozen (see Rigel::SetFrozen)");
+    return false;
+  }
 
   int idx = index - this->index_offset_;
 

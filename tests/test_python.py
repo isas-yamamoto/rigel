@@ -46,6 +46,20 @@ def main():
     check(st["shard_count"] >= 1, "stat() reports at least one shard file")
     check(st["index_bytes"] > 0, "stat() reports a non-zero index file size")
 
+    check(not r.frozen, "frozen is False before freezing")
+    check(rigel.Rigel.set_frozen(off_dir, True), "set_frozen(True) succeeds")
+    with rigel.Rigel(off_dir) as rf:
+        check(rf.frozen, "frozen reads back True after set_frozen")
+        check(rf.write(1001, b"Z" * 8) == -1, "write fails on a frozen directory")
+        check(rf.delete(1001) is False, "delete fails on a frozen directory")
+        check(rf.read(1001) == b"Y" * 8, "read still works on a frozen directory")
+        check(list(rf.scan()) == [1000, 1001], "scan still works on a frozen directory")
+        check(rf.stat()["frozen"] is True, "stat() reports frozen")
+    check(rigel.Rigel.set_frozen(off_dir, False), "set_frozen(False) succeeds")
+    with rigel.Rigel(off_dir) as ru:
+        check(not ru.frozen, "frozen reads back False after unfreezing")
+        check(ru.write(1001, b"Y" * 8) == 8, "write succeeds again after unfreezing")
+
     check(r.delete(1000), "delete succeeds")
     check(r.read(1000) is None, "read returns None after delete")
     check(list(r.scan()) == [1001], "scan skips the deleted index")

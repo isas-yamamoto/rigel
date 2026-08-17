@@ -72,6 +72,14 @@ int rigel_c_index_offset(const RigelHandle* h) {
   return h->impl.IndexOffset();
 }
 
+int rigel_c_frozen(const RigelHandle* h) {
+  return h->impl.Frozen() ? 1 : 0;
+}
+
+int rigel_c_set_frozen(const char* dirname, int frozen) {
+  return rigel::Rigel::SetFrozen(dirname, frozen != 0) ? 1 : 0;
+}
+
 int rigel_c_stat(RigelHandle* h, RigelCStat* out) {
   rigel::Rigel::Stat st;
   if (!h->impl.GetStat(&st)) {
@@ -87,6 +95,7 @@ int rigel_c_stat(RigelHandle* h, RigelCStat* out) {
   out->shard_count = st.shard_count;
   out->shard_bytes = st.shard_bytes;
   out->index_bytes = st.index_bytes;
+  out->frozen = st.frozen ? 1 : 0;
   return 1;
 }
 

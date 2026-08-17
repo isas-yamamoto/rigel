@@ -60,7 +60,16 @@ namespace rigel {
                           const char* key,
                           const int block_size=BLOCK_SIZE,
                           const int max_file_count=MAX_FILE_COUNT,
-                          const int index_offset=0);
+                          const int index_offset=0,
+                          const bool frozen=false);
+
+    // Flips the frozen flag on an already-initialized directory's
+    // rigel.meta in place, leaving key/block_size/max_file_count/
+    // index_offset untouched. A frozen directory still allows Read/Scan
+    // but Write/Delete fail (see Frozen()) - meant to guard finished,
+    // archival data against an accidental write. Returns false if dirname
+    // has no valid metadata to read.
+    static bool SetFrozen(const char* dirname, bool frozen);
 
     virtual ssize_t Write(const int index,
                           const unsigned char* data,
@@ -90,6 +99,7 @@ namespace rigel {
       int shard_count;
       unsigned long long shard_bytes;
       unsigned long long index_bytes;
+      bool frozen;
     };
 
     // Scans the whole index (like ScanInit/ScanNext) and lists dirname_ for
@@ -120,6 +130,10 @@ namespace rigel {
     }
     int IndexOffset() const { return this->index_offset_; }
 
+    // True if this directory is frozen (set via SetFrozen()): Write/Delete
+    // fail, Read/Scan still work.
+    bool Frozen() const { return this->frozen_; }
+
  private:
 
     // A single data file (one per file_index, fixed at max_file_size_
@@ -145,6 +159,7 @@ namespace rigel {
     int block_size_;
     unsigned long long max_file_size_;
     int index_offset_;
+    bool frozen_;
     char dirname_[MAXPATHLEN];
     char key_[MAX_KEY_SIZE];
 

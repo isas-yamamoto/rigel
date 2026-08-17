@@ -257,6 +257,49 @@ int main() {
     check(r8.IndexOffset() == 0, "Init() without index_offset defaults to 0");
   }
 
+  // Frozen directories: SetFrozen() rewrites rigel.meta in place, blocking
+  // Write/Delete on any handle that (re)reads it while still allowing
+  // Read/Scan - a guard against writing into finished, archival data.
+  {
+    const char* frozen_dir = "/tmp/rigel_test_frozen";
+    ::mkdir(frozen_dir, 0755);
+    check(rigel::Rigel::WriteMeta(frozen_dir, "fz", 8, 4),
+          "WriteMeta succeeds (frozen defaults to false)");
+
+    rigel::Rigel r9;
+    check(r9.Init(frozen_dir), "Init(dirname) reads freshly-written metadata");
+    check(!r9.Frozen(), "Frozen() is false before freezing");
+
+    unsigned char wbuf[8], rbuf[8];
+    std::memset(wbuf, 'F', 8);
+    check(r9.Write(0, wbuf, 8) == 8, "Write succeeds before freezing");
+
+    check(rigel::Rigel::SetFrozen(frozen_dir, true), "SetFrozen(true) succeeds");
+
+    rigel::Rigel r10;
+    check(r10.Init(frozen_dir), "Init(dirname) re-reads metadata after freezing");
+    check(r10.Frozen(), "Frozen() is true after freezing");
+    check(r10.Write(1, wbuf, 8) == -1, "Write fails on a frozen directory");
+    check(std::strstr(r10.LastError(), "frozen") != NULL,
+          "LastError names 'frozen' as the reason a frozen Write failed");
+    check(!r10.Delete(0), "Delete fails on a frozen directory");
+    check(r10.Read(0, rbuf, 8) == 8 && std::memcmp(wbuf, rbuf, 8) == 0,
+          "Read still works on a frozen directory");
+    check(r10.ScanInit(), "ScanInit still works on a frozen directory");
+
+    rigel::Rigel::Stat st;
+    check(r10.GetStat(&st) && st.frozen, "GetStat() reports frozen");
+
+    check(rigel::Rigel::SetFrozen(frozen_dir, false), "SetFrozen(false) succeeds");
+    rigel::Rigel r11;
+    check(r11.Init(frozen_dir), "Init(dirname) re-reads metadata after unfreezing");
+    check(!r11.Frozen(), "Frozen() is false after unfreezing");
+    check(r11.Write(1, wbuf, 8) == 8, "Write succeeds again after unfreezing");
+
+    check(!rigel::Rigel::SetFrozen("/tmp/rigel_test_frozen_missing", true),
+          "SetFrozen fails for a directory with no metadata");
+  }
+
   // LastError(): not set for a normal failure (reading an unwritten index),
   // but populated with a specific reason after misuse (out-of-range index).
   {

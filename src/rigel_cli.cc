@@ -8,6 +8,8 @@
  *   rigel delete <dir> <index>           (clears a record back to never-written)
  *   rigel scan  <dir> [start]            (lists written indices, one per line)
  *   rigel stat  <dir>                    (prints key/geometry/usage info)
+ *   rigel freeze <dir>                   (blocks further Write/Delete)
+ *   rigel unfreeze <dir>                 (allows Write/Delete again)
  *   rigel version                        (prints the library version)
  *
  * Example: rigel read /data/foo 42 | hexdump -C
@@ -33,6 +35,8 @@ void PrintUsage(const char* prog) {
       "  delete <dir> <index>      clear a record back to never-written\n"
       "  scan  <dir> [start]       list written indices, one per line\n"
       "  stat  <dir>               print key/geometry/usage info\n"
+      "  freeze <dir>              block further Write/Delete\n"
+      "  unfreeze <dir>            allow Write/Delete again\n"
       "  version                   print the library version\n",
       prog);
 }
@@ -198,6 +202,7 @@ int CmdStat(int argc, char** argv) {
   std::printf("max_file_count:  %d\n", st.max_file_count);
   std::printf("max_file_size:   %llu bytes\n", st.max_file_size);
   std::printf("index_offset:    %d\n", st.index_offset);
+  std::printf("frozen:          %s\n", st.frozen ? "yes" : "no");
   std::printf("records:         %lld\n", st.record_count);
   if (st.record_count > 0) {
     std::printf("index range:     %d..%d\n", st.min_index, st.max_index);
@@ -206,6 +211,22 @@ int CmdStat(int argc, char** argv) {
   std::printf("shard bytes:     %llu\n", st.shard_bytes);
   std::printf("index file bytes: %llu\n", st.index_bytes);
 
+  return 0;
+}
+
+int CmdFreeze(int argc, char** argv, bool frozen) {
+  const char* cmd_name = frozen ? "freeze" : "unfreeze";
+  if (argc < 2) {
+    std::fprintf(stderr, "usage: rigel %s <dir>\n", cmd_name);
+    return 1;
+  }
+  const char* dirname = argv[1];
+
+  if (!rigel::Rigel::SetFrozen(dirname, frozen)) {
+    std::fprintf(stderr, "rigel %s: no valid metadata under %s\n", cmd_name, dirname);
+    return 1;
+  }
+  std::printf("%s: %s\n", dirname, frozen ? "frozen" : "unfrozen");
   return 0;
 }
 
@@ -245,6 +266,12 @@ int main(int argc, char** argv) {
   }
   if (std::strcmp(cmd, "stat") == 0) {
     return CmdStat(sub_argc, sub_argv);
+  }
+  if (std::strcmp(cmd, "freeze") == 0) {
+    return CmdFreeze(sub_argc, sub_argv, true);
+  }
+  if (std::strcmp(cmd, "unfreeze") == 0) {
+    return CmdFreeze(sub_argc, sub_argv, false);
   }
 
   std::fprintf(stderr, "unknown command: %s\n\n", cmd);

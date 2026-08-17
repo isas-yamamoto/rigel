@@ -61,7 +61,7 @@ Build outputs (same for either build system):
 | shared library | `librigel.so` |
 | static library | `librigel.a` |
 | headers | `rigel.h` (C++), `rigel_c.h` (C) |
-| CLI tool | `rigel` (subcommands: `init`, `read`, `write`, `delete`, `scan`, `stat`, `version`) |
+| CLI tool | `rigel` (subcommands: `init`, `read`, `write`, `delete`, `scan`, `stat`, `freeze`, `unfreeze`, `version`) |
 | test suites | `test`/`test_c` (Makefile) / `rigel_test`/`rigel_test_c` (CMake) |
 
 ## Installing
@@ -133,7 +133,18 @@ rigel read /path/to/data 42 | hexdump -C
 rigel delete /path/to/data 42        # clears a record back to never-written
 rigel scan /path/to/data          # lists every written index, one per line
 rigel stat /path/to/data          # key, geometry, record count, disk usage
+rigel freeze /path/to/data        # blocks further write/delete (read/scan still work)
+rigel unfreeze /path/to/data      # allows write/delete again
 ```
+
+`freeze` flips a `frozen` flag in `rigel.meta` in place, without touching
+key/block_size/max_file_count/index_offset. Any handle that (re)reads
+that metadata afterwards refuses `Write`/`Delete` (`LastError()` names
+"frozen" as the reason) while `Read`/`Scan`/`stat` keep working - a guard
+against accidentally writing into data you've already finished with. A
+handle opened before the freeze keeps its prior in-memory state, same as
+block_size/key/etc.: reopen the directory to pick up a freeze/unfreeze
+made by another process or handle.
 
 From code, the only thing needed is `Init(dirname)`:
 
@@ -207,6 +218,8 @@ r.write(index, b"hello")
 data = r.read(index)                            # None if never written
 for idx in r.scan():
     ...                                          # a record exists at idx
+r.stat()                                         # dict: key/geometry/usage info
+rigel.Rigel.set_frozen("/path/to/data", True)    # blocks further write()/delete()
 r.close()                                        # or use `with rigel.Rigel(...) as r:`
 ```
 

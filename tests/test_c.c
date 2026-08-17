@@ -48,6 +48,29 @@ int main(void) {
   check(rigel_c_scan_next(h) == 1001, "rigel_c_scan_next returns the offset-shifted index");
   check(rigel_c_scan_next(h) == -1, "rigel_c_scan_next exhausts after one record");
 
+  RigelCStat st;
+  check(rigel_c_stat(h, &st) && st.record_count == 1, "rigel_c_stat reports record_count");
+  check(!st.frozen, "rigel_c_stat reports frozen=0 before freezing");
+
+  check(!rigel_c_frozen(h), "rigel_c_frozen is 0 before freezing");
+  check(rigel_c_set_frozen(dir, 1), "rigel_c_set_frozen(1) succeeds");
+  rigel_c_destroy(h);
+
+  h = rigel_c_create();
+  check(rigel_c_init_from_meta(h, dir), "rigel_c_init_from_meta re-reads metadata after freezing");
+  check(rigel_c_frozen(h), "rigel_c_frozen is 1 after freezing");
+  check(rigel_c_write(h, 1001, wbuf, 8) == -1, "rigel_c_write fails on a frozen directory");
+  check(!rigel_c_delete(h, 1001), "rigel_c_delete fails on a frozen directory");
+  check(rigel_c_read(h, 1001, rbuf, 8) == 8, "rigel_c_read still works on a frozen directory");
+
+  check(rigel_c_set_frozen(dir, 0), "rigel_c_set_frozen(0) succeeds");
+  rigel_c_destroy(h);
+
+  h = rigel_c_create();
+  check(rigel_c_init_from_meta(h, dir), "rigel_c_init_from_meta re-reads metadata after unfreezing");
+  check(!rigel_c_frozen(h), "rigel_c_frozen is 0 after unfreezing");
+  check(rigel_c_delete(h, 1001), "rigel_c_delete succeeds again after unfreezing");
+
   rigel_c_destroy(h);
 
   if (g_fail == 0) {
