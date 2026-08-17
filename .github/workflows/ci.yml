@@ -20,3 +20,18 @@ jobs:
 
       - name: Run tests
         run: make CXX=g++ check
+
+  thread-sanitizer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with ThreadSanitizer
+        run: g++ -Wall -O1 -g -std=c++11 -fsanitize=thread -pthread rigel.cc test.cc -o test_tsan
+
+      - name: Run tests under ThreadSanitizer
+        run: ./test_tsan

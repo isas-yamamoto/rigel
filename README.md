@@ -20,6 +20,9 @@ C++ライブラリ。衛星テレメトリ(REDACTED/REDACTED搭載機器)のよ�
 - 1ディレクトリ = 1系列(key)。`rigel_init` コマンドで `key`/`block_size`/
   `max_file_count` をディレクトリ配下のメタデータファイルに書いておけば、
   以後は `Init(dirname)` だけで済む（下記参照）。
+- 1つの`Rigel`インスタンスを複数スレッドから共有してWrite/Read/ScanInit/
+  ScanNextを同時に呼んでも安全（内部で1本のmutexにより直列化。詳細は
+  下記「スレッド安全性」参照）。
 
 ## ビルド
 
@@ -88,8 +91,25 @@ max_file_count)` も使える。
 ## テスト
 
 - `src/test.cc` : Write/Read一致、複数ファイルへの分割、Scan列挙、範囲外indexの
-  安全な失敗、メタデータ経由の`Init(dirname)`を確認する実動作テスト
-  （`make check` で実行）。
+  安全な失敗、メタデータ経由の`Init(dirname)`、複数スレッドからの同時Write/Read
+  を確認する実動作テスト（`make check` で実行）。
+- スレッド安全性はThreadSanitizerでも検証済み:
+  `g++ -std=c++11 -fsanitize=thread -pthread rigel.cc test.cc -o test_tsan`
+  （通常の`make check`は機能的な正しさのみ確認し、raceの有無はThreadSanitizer
+  でしか判定できない点に注意）。
+
+## スレッド安全性
+
+- 1つの`Rigel`インスタンスに対して、複数スレッドから`Write`/`Read`/`ScanInit`/
+  `ScanNext`を同時に呼んでも安全。内部の共有状態(mmap済み領域の管理・scan位置)
+  は1本の`std::mutex`で保護している。
+- 実装は粗粒度: 呼び出し毎に1本のmutexで丸ごと直列化するため、異なるshardへの
+  アクセスであっても実際には並列実行されない（スレッド安全性の単純さ・確実さ
+  を優先し、並行スループットは狙っていない）。より高い並行スループットが必要
+  になった場合は、shard単位のロック分割などが次のステップ。
+- 対象外: 複数「プロセス」から同じディレクトリへ同時に書き込む場合の排他制御
+  （flock等のファイルロック）は行っていない。プロセス間の同時書き込みが必要な
+  場合は呼び出し側で調整すること。
 
 ## 制約・注意点
 

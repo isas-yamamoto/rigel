@@ -3,6 +3,7 @@
 
 #include <sys/param.h>
 #include <sys/types.h>
+#include <mutex>
 #include <unordered_map>
 #include "google.h"
 
@@ -20,6 +21,10 @@ namespace rigel {
 
   const int BUF_SIZE = 4096;
 
+  // 1つのRigelインスタンスをスレッド間で共有し、Write/Read/ScanInit/ScanNextを
+  // 複数スレッドから同時に呼んでも安全（内部で1本のmutexにより直列化される）。
+  // ただし複数「プロセス」から同じディレクトリへ同時に書き込む場合の排他は
+  // 対象外（flock等のファイルロックは行っていない）。
   class Rigel {
 
  public:
@@ -87,6 +92,12 @@ namespace rigel {
 
     // for Scan
     int scan_pos_;
+
+    // data_maps_/index_map_/scan_pos_ へのアクセスはこのmutexで直列化する。
+    // Write/Read/ScanInit/ScanNextの入口で1本ロックする粗粒度な実装であり、
+    // 異なるshardへの同時アクセスであっても並列には走らない
+    // (スレッド安全性を単純かつ確実にすることを優先している)。
+    std::mutex mutex_;
 
     void DataFilename(int file_index, char* buf, size_t buflen) const;
     void IndexFilename(char* buf, size_t buflen) const;

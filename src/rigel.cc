@@ -290,6 +290,8 @@ bool Rigel::EnsureIndexSize(size_t min_size) {
 ssize_t Rigel::Write(const int index,
                      const unsigned char* data,
                      size_t size) {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+
   unsigned long long offset = (unsigned long long)index * this->block_size_;
   int file_index  = offset / this->max_file_size_;
   int file_offset = offset % this->max_file_size_;
@@ -330,6 +332,8 @@ ssize_t Rigel::Write(const int index,
 ssize_t Rigel::Read(const int index,
                     unsigned char* data,
                     size_t size) {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+
   unsigned long long offset = (unsigned long long)index * this->block_size_;
   int file_index  = offset / this->max_file_size_;
   int file_offset = offset % this->max_file_size_;
@@ -365,6 +369,8 @@ ssize_t Rigel::Read(const int index,
  *  失敗したときはfalseを返す。
  */
 bool Rigel::ScanInit(const int start) {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+
   if (!this->OpenIndexMapping()) {
     return false;
   }
@@ -379,6 +385,8 @@ bool Rigel::ScanInit(const int start) {
  *  失敗したときは-1を返す。
  */
 int Rigel::ScanNext() {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+
   if (this->index_map_.ptr == NULL) {
     return -1;
   }

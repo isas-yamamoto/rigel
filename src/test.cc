@@ -9,6 +9,8 @@
 #include <sys/types.h>
 #include <cstdio>
 #include <cstring>
+#include <thread>
+#include <vector>
 #include "rigel.h"
 
 static int g_fail = 0;
@@ -102,6 +104,69 @@ int main() {
     rigel::Rigel r3;
     check(!r3.Init("/tmp/rigel_test_meta_nonexistent"),
           "Init(dirname) fails when metadata is missing");
+  }
+
+  // スレッド安全性: 複数スレッドから同一Rigelインスタンスへ同時にWrite/Readしても
+  // 壊れないことを確認する(shardを跨ぐ書き込みでdata_maps_への挿入も競合させる)。
+  {
+    const char* mt_dir = "/tmp/rigel_test_mt";
+    ::mkdir(mt_dir, 0755);
+
+    const int mt_block_size = 64;
+    const int mt_max_file_count = 2; // 2indexごとにshardが変わるようにする
+    const int num_threads = 8;
+    const int per_thread = 50;
+
+    rigel::Rigel mt_rigel;
+    mt_rigel.Init(mt_dir, "mt", mt_block_size, mt_max_file_count);
+
+    // vector<bool>はビット詰め実装のため異なるindexへの同時書き込みでも
+    // 同じwordを共有し偽の競合になる(TSanで確認済み)。charを使う。
+    std::vector<char> write_ok(num_threads * per_thread, 0);
+    std::vector<std::thread> threads;
+    for (int t = 0; t < num_threads; ++t) {
+      threads.push_back(std::thread([&, t]() {
+        unsigned char buf[mt_block_size];
+        for (int i = 0; i < per_thread; ++i) {
+          int idx = t * per_thread + i;
+          std::memset(buf, (unsigned char)(t * 16 + i % 16), mt_block_size);
+          ssize_t r = mt_rigel.Write(idx, buf, mt_block_size);
+          write_ok[idx] = (r == (ssize_t)mt_block_size);
+        }
+      }));
+    }
+    for (size_t i = 0; i < threads.size(); ++i) {
+      threads[i].join();
+    }
+
+    bool all_write_ok = true;
+    for (size_t i = 0; i < write_ok.size(); ++i) {
+      if (!write_ok[i]) {
+        all_write_ok = false;
+      }
+    }
+    check(all_write_ok, "Concurrent Write from multiple threads all succeed");
+
+    bool all_read_ok = true;
+    for (int t = 0; t < num_threads; ++t) {
+      for (int i = 0; i < per_thread; ++i) {
+        int idx = t * per_thread + i;
+        unsigned char rbuf[mt_block_size];
+        ssize_t r = mt_rigel.Read(idx, rbuf, mt_block_size);
+        unsigned char expected = (unsigned char)(t * 16 + i % 16);
+        if (r != (ssize_t)mt_block_size) {
+          all_read_ok = false;
+          continue;
+        }
+        for (int b = 0; b < mt_block_size; ++b) {
+          if (rbuf[b] != expected) {
+            all_read_ok = false;
+            break;
+          }
+        }
+      }
+    }
+    check(all_read_ok, "Data written concurrently reads back correctly (no cross-thread corruption)");
   }
 
   if (g_fail == 0) {
