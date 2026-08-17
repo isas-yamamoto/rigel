@@ -10,6 +10,12 @@
 
 namespace rigel {
 
+  // Library version (semantic versioning: major.minor.patch).
+  const int VERSION_MAJOR = 1;
+  const int VERSION_MINOR = 0;
+  const int VERSION_PATCH = 0;
+  const char VERSION[] = "1.0.0";
+
   // Max File Size(default 128MB)
   const int MAX_FILE_COUNT = 131072;
 

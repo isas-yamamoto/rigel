@@ -1,7 +1,7 @@
 /** @file
  *  @brief Implementation of the Rigel class
  *  @author Yukio Yamamoto
- *  @date November 6, 2009 version 0.01
+ *  @since November 6, 2009
  */
 #include <sys/types.h>
 #include <sys/stat.h>

@@ -63,6 +63,29 @@ jobs:
       - name: Run tests under ASan+UBSan
         run: ./test_asan
 
+  cmake-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${{ runner.temp }}/rigel-install
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Install
+        run: cmake --install build
+
+      - name: Verify installed pkg-config file and binary
+        run: |
+          PKG_CONFIG_PATH=${{ runner.temp }}/rigel-install/lib/pkgconfig pkg-config --cflags --libs rigel
+          LD_LIBRARY_PATH=${{ runner.temp }}/rigel-install/lib ${{ runner.temp }}/rigel-install/bin/rigel version
+
   cppcheck:
     runs-on: ubuntu-latest
     defaults:

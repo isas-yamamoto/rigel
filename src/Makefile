@@ -3,6 +3,14 @@ CXXFLAGS=-Wall -O3 -std=c++11 -fPIC -pthread
 LDFLAGS=-pthread
 OBJS=rigel.o
 
+# Keep in sync with rigel::VERSION in rigel.h.
+VERSION=1.0.0
+
+PREFIX ?= /usr/local
+INCLUDEDIR=$(PREFIX)/include
+LIBDIR=$(PREFIX)/lib
+BINDIR=$(PREFIX)/bin
+
 .SUFFIXES: .cc .o .so
 
 .PHONY: all
@@ -28,6 +36,20 @@ librigel.a: $(OBJS)
 .PHONY: check
 check: test
 	LD_LIBRARY_PATH=. ./test
+
+.PHONY: install
+install: all
+	install -d $(DESTDIR)$(INCLUDEDIR) $(DESTDIR)$(LIBDIR) $(DESTDIR)$(BINDIR)
+	install -m 644 rigel.h $(DESTDIR)$(INCLUDEDIR)/
+	install -m 644 librigel.so $(DESTDIR)$(LIBDIR)/
+	install -m 644 librigel.a $(DESTDIR)$(LIBDIR)/
+	install -m 755 rigel $(DESTDIR)$(BINDIR)/
+
+.PHONY: uninstall
+uninstall:
+	$(RM) $(DESTDIR)$(INCLUDEDIR)/rigel.h
+	$(RM) $(DESTDIR)$(LIBDIR)/librigel.so $(DESTDIR)$(LIBDIR)/librigel.a
+	$(RM) $(DESTDIR)$(BINDIR)/rigel
 
 .PHONY: clean
 clean:

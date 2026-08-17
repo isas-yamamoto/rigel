@@ -7,7 +7,8 @@ sequential integer ID (0, 1, 2, ...). Built for cases like satellite
 telemetry, where large volumes of fixed-size packets need to be stored
 and looked up by time.
 
-Licensed under the [MIT License](LICENSE).
+Licensed under the [MIT License](LICENSE). Current version: `1.0.0`
+(see `rigel::VERSION` in `rigel.h`, or run `rigel version`).
 
 ## Features
 
@@ -29,24 +30,65 @@ Licensed under the [MIT License](LICENSE).
 
 ## Building
 
-```sh
-cd src
-make CXX=g++          # builds the library, its tools, and the test suite
-make CXX=g++ check     # runs the test suite
-```
-
 Requires C++11 or later (uses `std::mutex`, `std::unordered_map`,
 `std::thread`).
 
-Build outputs:
+**Plain Makefile** (`src/Makefile` - what CI's main build/test/sanitizer/
+cppcheck jobs use):
+
+```sh
+cd src
+make               # builds the library, the rigel CLI, and the test suite
+make check         # runs the test suite
+```
+
+**CMake** (`CMakeLists.txt` at the repo root - also what CI verifies, and
+the path that produces a pkg-config file and a properly SONAME'd shared
+library):
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
+
+Build outputs (same for either build system):
 
 | kind | name |
 |---|---|
 | shared library | `librigel.so` |
 | static library | `librigel.a` |
 | header | `rigel.h` |
-| CLI tool | `rigel` (subcommands: `init`, `read`, `write`, `scan`, `stat`) |
-| test suite | `test` |
+| CLI tool | `rigel` (subcommands: `init`, `read`, `write`, `scan`, `stat`, `version`) |
+| test suite | `test` (Makefile) / `rigel_test` (CMake) |
+
+## Installing
+
+**Makefile:**
+
+```sh
+make install PREFIX=/usr/local     # PREFIX defaults to /usr/local
+make uninstall PREFIX=/usr/local
+```
+
+`DESTDIR` is also honored for staged installs (`make install DESTDIR=/stage
+PREFIX=/usr/local`).
+
+**CMake** (also generates a pkg-config file):
+
+```sh
+# Set CMAKE_INSTALL_PREFIX at configure time, not just at install time -
+# it's baked into the generated rigel.pc.
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr/local
+cmake --build build -j
+cmake --install build
+```
+
+Once installed, a consumer can pick up the right flags with:
+
+```sh
+pkg-config --cflags --libs rigel
+```
 
 ## Usage
 
@@ -126,6 +168,7 @@ Besides `rigel.meta`, `dirname` ends up containing data files named
 | `strict-warnings` | rebuilds with `-Wall -Wextra -Werror` (warnings fail the build) |
 | `thread-sanitizer` | catches races with ThreadSanitizer |
 | `address-ub-sanitizer` | catches memory-safety/UB issues with AddressSanitizer+UBSan |
+| `cmake-build` | configure/build/test/install via CMake, then sanity-checks the installed pkg-config file and binary |
 | `cppcheck` | static analysis (`warning`/`performance`/`portability` categories; fails on any finding) |
 
 ## Thread safety

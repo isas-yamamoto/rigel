@@ -7,6 +7,7 @@
  *   rigel write <dir> <index>            (reads the raw record from stdin)
  *   rigel scan  <dir> [start]            (lists written indices, one per line)
  *   rigel stat  <dir>                    (prints key/geometry/usage info)
+ *   rigel version                        (prints the library version)
  *
  * Example: rigel read /data/foo 42 | hexdump -C
  */
@@ -31,8 +32,14 @@ void PrintUsage(const char* prog) {
       "  read  <dir> <index>       write the raw record to stdout\n"
       "  write <dir> <index>       read the raw record from stdin\n"
       "  scan  <dir> [start]       list written indices, one per line\n"
-      "  stat  <dir>               print key/geometry/usage info\n",
+      "  stat  <dir>               print key/geometry/usage info\n"
+      "  version                   print the library version\n",
       prog);
+}
+
+int CmdVersion(int, char**) {
+  std::printf("rigel %s\n", rigel::VERSION);
+  return 0;
 }
 
 int CmdInit(int argc, char** argv) {
@@ -239,6 +246,11 @@ int main(int argc, char** argv) {
   int sub_argc = argc - 1;
   char** sub_argv = argv + 1;
 
+  if (std::strcmp(cmd, "version") == 0 ||
+      std::strcmp(cmd, "--version") == 0 ||
+      std::strcmp(cmd, "-v") == 0) {
+    return CmdVersion(sub_argc, sub_argv);
+  }
   if (std::strcmp(cmd, "init") == 0) {
     return CmdInit(sub_argc, sub_argv);
   }
