@@ -104,4 +104,4 @@ jobs:
             --error-exitcode=1 \
             --suppress=missingIncludeSystem \
             --suppress=normalCheckLevelMaxBranches \
-            -I. rigel.cc rigel_cli.cc ../tests/test.cc ../bench/bench.cc rigel.h
+            -I. rigel.cc rigel_c.cc rigel_cli.cc ../tests/test.cc ../tests/test_c.c ../bench/bench.cc rigel.h rigel_c.h

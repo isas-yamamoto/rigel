@@ -60,9 +60,9 @@ Build outputs (same for either build system):
 |---|---|
 | shared library | `librigel.so` |
 | static library | `librigel.a` |
-| header | `rigel.h` |
-| CLI tool | `rigel` (subcommands: `init`, `read`, `write`, `scan`, `stat`, `version`) |
-| test suite | `test` (Makefile) / `rigel_test` (CMake) |
+| headers | `rigel.h` (C++), `rigel_c.h` (C) |
+| CLI tool | `rigel` (subcommands: `init`, `read`, `write`, `delete`, `scan`, `stat`, `version`) |
+| test suites | `test`/`test_c` (Makefile) / `rigel_test`/`rigel_test_c` (CMake) |
 
 ## Installing
 
@@ -165,12 +165,39 @@ max_file_count)` is still available.
 Besides `rigel.meta`, `dirname` ends up containing data files named
 `<key>.<4-digit file_index>` and an index file named `<key>.index`.
 
+### From C
+
+`rigel.h` is a C++ class and can't be linked from a C translation unit
+(no `extern "C"`, virtual methods, `std::mutex` members). `rigel_c.h`
+wraps it behind an opaque handle for C callers; same library, same
+`rigel.meta` format, interchangeable with the C++ API on the same
+directory:
+
+```c
+#include "rigel_c.h"
+
+RigelHandle* h = rigel_c_create();
+if (!rigel_c_init_from_meta(h, "/path/to/data")) {
+  fprintf(stderr, "init failed: %s\n", rigel_c_last_error(h));
+}
+
+unsigned char buf[1024] = { ... };
+rigel_c_write(h, index, buf, sizeof(buf));
+
+unsigned char rbuf[1024];
+ssize_t n = rigel_c_read(h, index, rbuf, sizeof(rbuf));  // -1 if never written
+
+rigel_c_destroy(h);
+```
+
 ## Tests
 
 - `tests/test.cc`: a functional test covering Write/Read consistency,
   splitting across multiple files, Scan enumeration, safe failure on
   out-of-range indices, `Init(dirname)` via metadata, and concurrent
   Write/Read from multiple threads (run via `make check`).
+- `tests/test_c.c`: compiled as plain C, exercises `rigel_c.h` to prove
+  it's actually callable from C (also run via `make check`).
 - Also verified with ThreadSanitizer and AddressSanitizer+UBSan (see the
   CI jobs below for the exact build commands) - functional tests alone
   can't tell whether a race or memory-safety issue exists.
