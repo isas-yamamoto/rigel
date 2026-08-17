@@ -96,7 +96,7 @@ pkg-config --cflags --libs rigel
 First, initialize the directory with `rigel init` (once):
 
 ```sh
-./rigel init /path/to/data mykey 1024 131072   # dirname key block_size max_file_count
+rigel init /path/to/data mykey 1024 131072   # dirname key block_size max_file_count
 ```
 
 This writes key/block_size/max_file_count into
@@ -109,10 +109,10 @@ The `rigel` command doubles as a quick way to poke at a directory from
 the shell:
 
 ```sh
-echo -n "hello" | ./rigel write /path/to/data 42
-./rigel read /path/to/data 42 | hexdump -C
-./rigel scan /path/to/data          # lists every written index, one per line
-./rigel stat /path/to/data          # key, geometry, record count, disk usage
+echo -n "hello" | rigel write /path/to/data 42
+rigel read /path/to/data 42 | hexdump -C
+rigel scan /path/to/data          # lists every written index, one per line
+rigel stat /path/to/data          # key, geometry, record count, disk usage
 ```
 
 From code, the only thing needed is `Init(dirname)`:
