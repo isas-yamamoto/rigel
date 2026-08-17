@@ -366,6 +366,14 @@ ssize_t Rigel::Write(const int index,
                      size_t size) {
   std::lock_guard<std::mutex> lock(this->mutex_);
 
+  if (this->max_file_size_ == 0) {
+    // block_size_/max_file_size_ are still their constructor defaults -
+    // either Init() was never called, or the last Init(dirname) call
+    // failed and its bool return was ignored. Bail out here rather than
+    // dividing by max_file_size_ below (SIGFPE: integer division by 0).
+    this->SetError("Write: not initialized (Init() must succeed before Write/Read/Delete)");
+    return -1;
+  }
   if (this->read_only_) {
     this->SetError("Write: handle is read-only (see Init's read_only param)");
     return -1;
@@ -426,6 +434,12 @@ ssize_t Rigel::Write(const int index,
 bool Rigel::Delete(const int index) {
   std::lock_guard<std::mutex> lock(this->mutex_);
 
+  if (this->max_file_size_ == 0) {
+    // See the identical check in Write() - avoids dividing by
+    // max_file_size_ below when Init() was never called or failed.
+    this->SetError("Delete: not initialized (Init() must succeed before Write/Read/Delete)");
+    return false;
+  }
   if (this->read_only_) {
     this->SetError("Delete: handle is read-only (see Init's read_only param)");
     return false;
@@ -472,6 +486,13 @@ ssize_t Rigel::Read(const int index,
                     unsigned char* data,
                     size_t size) {
   std::lock_guard<std::mutex> lock(this->mutex_);
+
+  if (this->max_file_size_ == 0) {
+    // See the identical check in Write() - avoids dividing by
+    // max_file_size_ below when Init() was never called or failed.
+    this->SetError("Read: not initialized (Init() must succeed before Write/Read/Delete)");
+    return -1;
+  }
 
   int idx = index - this->index_offset_;
   if (idx < 0) {

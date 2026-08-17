@@ -137,6 +137,17 @@ int main() {
     rigel::Rigel r3;
     check(!r3.Init("/tmp/rigel_test_meta_nonexistent"),
           "Init(dirname) fails when metadata is missing");
+
+    // Calling Write/Read/Delete after Init(dirname) failed (its bool
+    // return ignored) must fail cleanly, not divide by the still-zero
+    // max_file_size_ (that used to be a SIGFPE crash, not a -1/false).
+    unsigned char wbuf3[16], rbuf3[16];
+    std::memset(wbuf3, 'Q', 16);
+    check(r3.Write(0, wbuf3, 16) == -1, "Write on a never-successfully-Init'd handle fails cleanly");
+    check(std::strstr(r3.LastError(), "not initialized") != NULL,
+          "LastError names 'not initialized' as the reason");
+    check(r3.Read(0, rbuf3, 16) == -1, "Read on a never-successfully-Init'd handle fails cleanly");
+    check(!r3.Delete(0), "Delete on a never-successfully-Init'd handle fails cleanly");
   }
 
   // A key containing a path separator (e.g. from a hand-planted or
