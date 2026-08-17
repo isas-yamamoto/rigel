@@ -1,10 +1,6 @@
 *.o
 *.so
 *.a
-rigel_read
-rigel_write
-rigel_scan
-rigel_ccsds_size
-rigel_init
+rigel
 test
 bench

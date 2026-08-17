@@ -18,7 +18,7 @@ volumes of fixed-size packets need to be stored and looked up by time.
   has been written. Reading an index that was never written fails.
 - Data and index files are `mmap`'d. Once opened they stay open; after that
   it's just pointer arithmetic + `memcpy`.
-- One directory = one series (key). The `rigel_init` command writes
+- One directory = one series (key). `rigel init` writes
   `key`/`block_size`/`max_file_count` into a metadata file under the
   directory, after which `Init(dirname)` alone is enough (see below).
 - A single `Rigel` instance can be shared across threads, calling
@@ -33,8 +33,8 @@ make CXX=g++          # builds the library, its tools, and the test suite
 make CXX=g++ check     # runs the test suite
 ```
 
-Requires C++11 or later (uses `std::regex`, `std::unordered_map`, and
-`std::fstream`'s move support).
+Requires C++11 or later (uses `std::mutex`, `std::unordered_map`,
+`std::thread`).
 
 Build outputs:
 
@@ -43,15 +43,15 @@ Build outputs:
 | shared library | `librigel.so` |
 | static library | `librigel.a` |
 | header | `rigel.h` |
-| CLI tools | `rigel_read` `rigel_write` `rigel_scan` `rigel_ccsds_size` `rigel_init` |
+| CLI tool | `rigel` (subcommands: `init`, `read`, `write`, `scan`, `stat`) |
 | test suite | `test` |
 
 ## Usage
 
-First, initialize the directory with `rigel_init` (once):
+First, initialize the directory with `rigel init` (once):
 
 ```sh
-./rigel_init /path/to/data mykey 1024 131072   # dirname key block_size max_file_count
+./rigel init /path/to/data mykey 1024 131072   # dirname key block_size max_file_count
 ```
 
 This writes key/block_size/max_file_count into
@@ -60,7 +60,17 @@ already has metadata (since that would corrupt existing data).
 block_size/max_file_count default to `BLOCK_SIZE`=1024 and
 `MAX_FILE_COUNT`=131072 if omitted.
 
-From then on, the code side only needs `Init(dirname)`:
+The `rigel` command doubles as a quick way to poke at a directory from
+the shell:
+
+```sh
+echo -n "hello" | ./rigel write /path/to/data 42
+./rigel read /path/to/data 42 | hexdump -C
+./rigel scan /path/to/data          # lists every written index, one per line
+./rigel stat /path/to/data          # key, geometry, record count, disk usage
+```
+
+From code, the only thing needed is `Init(dirname)`:
 
 ```cpp
 #include "rigel.h"
@@ -148,8 +158,8 @@ Besides `rigel.meta`, `dirname` ends up containing data files named
   a bug. **Misuse / real errors** (an out-of-range index, a write
   exceeding a shard's bounds, an open/mmap failure, etc.) do set a
   specific reason.
-- The CLI tools (`rigel_read` etc.) print `argv[0]: <LastError()>` to
-  stderr when `Init()` fails - see them for a usage example.
+- The `rigel` CLI prints `rigel <subcommand>: <LastError()>` to stderr
+  when a call fails - see `rigel_cli.cc` for a usage example.
 
 ## Limitations
 

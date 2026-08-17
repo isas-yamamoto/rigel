@@ -69,6 +69,17 @@ namespace rigel {
     // call (one buffer is reused per instance).
     const char* LastError() const;
 
+    // Accessors for the parameters given to Init(). Mainly useful for
+    // tools (e.g. a CLI) that only know a directory and need to recover
+    // the key/block_size/max_file_count that directory was set up with.
+    int BlockSize() const { return this->block_size_; }
+    const char* Key() const { return this->key_; }
+    int MaxFileCount() const {
+      return (this->block_size_ > 0)
+          ? (int)(this->max_file_size_ / this->block_size_)
+          : 0;
+    }
+
  private:
 
     // A single data file (one per file_index, fixed at max_file_size_

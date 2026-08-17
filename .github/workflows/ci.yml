@@ -81,5 +81,4 @@ jobs:
             --error-exitcode=1 \
             --suppress=missingIncludeSystem \
             --suppress=normalCheckLevelMaxBranches \
-            rigel.cc rigel_read.cc rigel_write.cc rigel_scan.cc rigel_ccsds_size.cc \
-            rigel_init.cc test.cc rigel.h
+            rigel.cc rigel_cli.cc test.cc bench.cc rigel.h
