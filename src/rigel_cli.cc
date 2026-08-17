@@ -45,13 +45,13 @@ void PrintUsage(const char* prog) {
       "                            (default: \"index: hex\" one per line;\n"
       "                            --raw: concatenated raw bytes)\n"
       "  stat  <dir> [--read-only] print key/geometry/usage info\n"
+      "  freeze <dir>              block further Write/Delete\n"
+      "  unfreeze <dir>            allow Write/Delete again\n"
+      "  version                   print the library version\n"
       "\n"
       "  --read-only (on read/scan/dump/stat): opens the directory with no\n"
       "  write access needed at all, so it works against files/mounts this\n"
-      "  process can't write to (e.g. a read-only NFS export).\n"
-      "  freeze <dir>              block further Write/Delete\n"
-      "  unfreeze <dir>            allow Write/Delete again\n"
-      "  version                   print the library version\n",
+      "  process can't write to (e.g. a read-only NFS export).\n",
       prog);
 }
 
