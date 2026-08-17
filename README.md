@@ -16,7 +16,7 @@ C++ライブラリ。衛星テレメトリ(REDACTED/REDACTED搭載機器)のよ�
 - 各indexに「書き込み済みか」を1byteで持つ別ファイル(`.index`)を併設。未書き込み
   のindexを読もうとすると失敗を返す。
 - データファイル・indexファイルは `mmap` している。一度開いたら閉じず、以後は
-  ポインタ演算 + `memcpy` のみで読み書きする（詳細は下記ベンチマーク参照）。
+  ポインタ演算 + `memcpy` のみで読み書きする。
 - 1ディレクトリ = 1系列(key)。`rigel_init` コマンドで `key`/`block_size`/
   `max_file_count` をディレクトリ配下のメタデータファイルに書いておけば、
   以後は `Init(dirname)` だけで済む（下記参照）。
@@ -29,9 +29,8 @@ make CXX=g++          # ライブラリ・付属ツール・testを一括ビル�
 make CXX=g++ check     # test を実行
 ```
 
-`Makefile` の `CXX` 既定値は社内独自コンパイラ `s++` になっているので、通常の
-g++/clang++ 環境では `CXX=g++` を明示する。C++11以上が必要（`std::regex`,
-`std::unordered_map`, `std::fstream` の move対応を使用）。
+C++11以上が必要（`std::regex`, `std::unordered_map`, `std::fstream` の
+move対応を使用）。
 
 生成物:
 
@@ -42,7 +41,6 @@ g++/clang++ 環境では `CXX=g++` を明示する。C++11以上が必要（`std
 | ヘッダ | `rigel.h` |
 | CLIツール | `rigel_read` `rigel_write` `rigel_scan` `rigel_ccsds_size` `rigel_init` |
 | テスト | `test` |
-| ベンチマーク | `bench` |
 
 ## 使い方
 
@@ -87,27 +85,11 @@ max_file_count)` も使える。
 `dirname` 配下には `rigel.meta` の他、`<key>.<file_index 4桁>` というデータ
 ファイルと `<key>.index` というインデックスファイルが作られる。
 
-## テスト・ベンチマーク
+## テスト
 
 - `src/test.cc` : Write/Read一致、複数ファイルへの分割、Scan列挙、範囲外indexの
-  安全な失敗を確認する実動作テスト（`make check` で実行）。
-- `src/bench.cc` : Read/Writeのスループット計測。`./bench <n> [seq|rand]` で
-  件数とアクセス順序を指定できる。
-
-参考値（block_size=1024, n=20000, 開発マシンでの実測）:
-
-| 実装 | Write | Read |
-|---|---|---|
-| 毎回open/close（旧実装） | 14110 ns/op | 14009 ns/op |
-| ファイルハンドル永続化 | 6643 ns/op | 6457 ns/op |
-| + 冗長なseekの省略 | 606 ns/op | 321 ns/op |
-| mmap化（順次アクセス） | 788 ns/op | 138 ns/op |
-| mmap化（ランダムアクセス） | 724 ns/op | 159 ns/op |
-
-mmap化後のReadは初期実装比で100倍以上。Writeの初回アクセスは新規ページに対する
-kernelのpage fault分だけ重いが、既存ページへの再書き込みは約80 ns/opまで下がる
-（Read同等）。書き込みは基本1回、読み出しは繰り返し行うテレメトリ用途に対して
-理にかなったトレードオフ。
+  安全な失敗、メタデータ経由の`Init(dirname)`を確認する実動作テスト
+  （`make check` で実行）。
 
 ## 制約・注意点
 
