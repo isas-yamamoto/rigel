@@ -44,7 +44,7 @@ target_link_libraries(rigel_cli PRIVATE rigel)
 set_target_properties(rigel_cli PROPERTIES OUTPUT_NAME rigel)
 
 enable_testing()
-add_executable(rigel_test src/test.cc)
+add_executable(rigel_test tests/test.cc)
 target_link_libraries(rigel_test PRIVATE rigel Threads::Threads)
 add_test(NAME rigel_test COMMAND rigel_test)
 

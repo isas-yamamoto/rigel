@@ -148,7 +148,7 @@ Besides `rigel.meta`, `dirname` ends up containing data files named
 
 ## Tests
 
-- `src/test.cc`: a functional test covering Write/Read consistency,
+- `tests/test.cc`: a functional test covering Write/Read consistency,
   splitting across multiple files, Scan enumeration, safe failure on
   out-of-range indices, `Init(dirname)` via metadata, and concurrent
   Write/Read from multiple threads (run via `make check`).

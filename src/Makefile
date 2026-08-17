@@ -25,6 +25,9 @@ rigel: rigel_cli.o librigel.so
 test: test.o librigel.so
 	$(CXX) $(LDFLAGS) -o $@ $< -L. -lrigel
 
+test.o: ../tests/test.cc
+	$(CXX) $(CXXFLAGS) -I. -c $< -o $@
+
 librigel.so: $(OBJS)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $(OBJS)
 
