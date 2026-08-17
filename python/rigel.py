@@ -124,6 +124,12 @@ class Rigel:
 
     def __init__(self, dirname, key=None, block_size=None,
                  max_file_count=None, index_offset=0):
+        # Bound to the instance (not looked up on the module's `_lib`
+        # global in close()/__del__) because at interpreter shutdown
+        # Python clears module globals before running an object's
+        # __del__, which would otherwise raise "NoneType has no
+        # attribute 'rigel_c_destroy'" on process exit.
+        self._destroy = _lib.rigel_c_destroy
         self._handle = _lib.rigel_c_create()
         if key is None:
             if not _lib.rigel_c_init_from_meta(self._handle, dirname.encode()):
@@ -226,7 +232,7 @@ class Rigel:
 
     def close(self):
         if self._handle is not None:
-            _lib.rigel_c_destroy(self._handle)
+            self._destroy(self._handle)
             self._handle = None
 
     def __enter__(self):
