@@ -1,5 +1,5 @@
 /** @file
- *  @brief Rigelクラスの実装部
+ *  @brief Implementation of the Rigel class
  *  @author Yukio Yamamoto
  *  @date November 6, 2009 version 0.01
  */
@@ -19,7 +19,7 @@ namespace rigel
 {
 
 namespace {
-const size_t INDEX_GROW_CHUNK = 1 << 20; // 1MiB分ずつ伸長
+const size_t INDEX_GROW_CHUNK = 1 << 20; // grow the index file 1MiB at a time
 const char META_FILENAME[] = "rigel.meta";
 }
 
@@ -39,7 +39,7 @@ Rigel::Rigel()
 /**
  *  @brief destructor
  *
- *  mmapしていた領域とファイルディスクリプタを全て解放する。
+ *  Releases every mmap'd region and file descriptor.
  */
 Rigel::~Rigel() {
   for (std::unordered_map<int, DataMapping>::iterator it = this->data_maps_.begin();
@@ -60,12 +60,12 @@ Rigel::~Rigel() {
 }
 
 /**
- *  @brief 各種パラメータを初期化する。
+ *  @brief Initializes the various parameters.
  *
- *  @param[in] dirname ディレクトリ名称
- *  @param[in] key キーワード
- *  @param[in] block_size ブロックサイズ
- *  @param[in] max_file_count 最大ファイル数
+ *  @param[in] dirname directory name
+ *  @param[in] key key string
+ *  @param[in] block_size block size
+ *  @param[in] max_file_count max number of blocks per file
  */
 void Rigel::Init(const char* dirname,
                  const char* key,
@@ -82,12 +82,12 @@ void Rigel::Init(const char* dirname,
 }
 
 /**
- *  @brief dirname配下のメタデータファイルを読み、そこに書かれたkey/block_size/
- *  max_file_countで初期化する。
+ *  @brief Reads the metadata file under dirname and initializes with the
+ *  key/block_size/max_file_count found there.
  *
- *  @param[in] dirname ディレクトリ名称
- *  @return メタデータが正しく読めて初期化できたときはtrueを返す。
- *  メタデータが無い/壊れているときはfalseを返す。
+ *  @param[in] dirname directory name
+ *  @return true if the metadata was read and initialization succeeded.
+ *  false if the metadata is missing or malformed.
  */
 bool Rigel::Init(const char* dirname) {
   char filename[MAXPATHLEN + 32];
@@ -131,9 +131,9 @@ bool Rigel::Init(const char* dirname) {
 }
 
 /**
- *  @brief dirname配下にkey/block_size/max_file_countをメタデータとして書き込む。
+ *  @brief Writes key/block_size/max_file_count as metadata under dirname.
  *
- *  @return 成功したときはtrueを返す。
+ *  @return true on success.
  */
 bool Rigel::WriteMeta(const char* dirname,
                       const char* key,
@@ -144,8 +144,8 @@ bool Rigel::WriteMeta(const char* dirname,
 
   FILE* f = std::fopen(filename, "w");
   if (f == NULL) {
-    // staticメソッドでインスタンスが無くLastError()に載せられないため、
-    // ここだけは直接stderrに出す。
+    // Static method, so there's no instance to attach this to LastError() -
+    // this is the one place that prints directly to stderr.
     std::fprintf(stderr, "Rigel::WriteMeta: fopen(%s) failed: %s\n",
                   filename, std::strerror(errno));
     return false;
@@ -158,9 +158,10 @@ bool Rigel::WriteMeta(const char* dirname,
 }
 
 /**
- *  @brief 直近の失敗の詳細をlast_error_に記録する(printf形式)。
+ *  @brief Records the details of the most recent failure into last_error_
+ *  (printf-style).
  *
- *  呼び出し側で既にmutex_をロックしている前提で、ここでは改めてロックしない。
+ *  Assumes the caller already holds mutex_; this does not lock it again.
  */
 void Rigel::SetError(const char* fmt, ...) {
   va_list ap;
@@ -170,7 +171,7 @@ void Rigel::SetError(const char* fmt, ...) {
 }
 
 /**
- *  @brief 直近の失敗の詳細を返す。
+ *  @brief Returns the details of the most recent failure.
  */
 const char* Rigel::LastError() const {
   std::lock_guard<std::mutex> lock(this->mutex_);
@@ -186,12 +187,12 @@ void Rigel::IndexFilename(char* buf, size_t buflen) const {
 }
 
 /**
- *  @brief file_indexに対応するデータファイルをmmapしたものを返す。
+ *  @brief Returns the mmap'd data file corresponding to file_index.
  *
- *  データファイル1つの大きさは max_file_size_ で固定なので、
- *  一度確保したら伸長は不要（範囲外アクセスはmmap自体が守ってくれる）。
+ *  A single data file's size is fixed at max_file_size_, so once created it
+ *  never needs to grow (mmap itself guards against out-of-bounds access).
  *
- *  @return 成功したときはマッピングへのポインタ、失敗したときはnullptr。
+ *  @return a pointer to the mapping on success, nullptr on failure.
  */
 Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
   std::unordered_map<int, DataMapping>::iterator it = this->data_maps_.find(file_index);
@@ -242,12 +243,12 @@ Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
 }
 
 /**
- *  @brief インデックスファイルを（未オープンなら）開く。
+ *  @brief Opens the index file if it isn't open yet.
  *
- *  既に他のプロセス等がindexを書き込んでいた場合は、そのファイルサイズ分だけ
- *  最初からmmapしておく。
+ *  If another process has already written to the index, maps it at that
+ *  file's existing size right away.
  *
- *  @return 成功したときはtrueを返す。
+ *  @return true on success.
  */
 bool Rigel::OpenIndexMapping() {
   if (this->index_map_.fd >= 0) {
@@ -268,7 +269,7 @@ bool Rigel::OpenIndexMapping() {
   st.st_size = 0;
   if (::fstat(fd, &st) != 0) {
     this->SetError("fstat(%s) failed: %s", filename, std::strerror(errno));
-    // 致命的ではない。新規ファイル(サイズ0)として扱って続行する。
+    // Not fatal - proceed as if this were a fresh, empty file.
   }
   if (st.st_size > 0) {
     if (!this->EnsureIndexSize((size_t)st.st_size)) {
@@ -281,12 +282,12 @@ bool Rigel::OpenIndexMapping() {
 }
 
 /**
- *  @brief インデックスファイルのmmap領域が少なくともmin_sizeバイトになるようにする。
+ *  @brief Ensures the index file's mmap region is at least min_size bytes.
  *
- *  既に十分な大きさがあれば何もしない。足りない場合はftruncateで伸長してから
- *  再mmapする。
+ *  Does nothing if it's already big enough. Otherwise grows the file with
+ *  ftruncate and remaps it.
  *
- *  @return 成功したときはtrueを返す。
+ *  @return true on success.
  */
 bool Rigel::EnsureIndexSize(size_t min_size) {
   if (this->index_map_.size >= min_size) {
@@ -319,13 +320,13 @@ bool Rigel::EnsureIndexSize(size_t min_size) {
 }
 
 /**
- *  @brief indexで指定した位置にデータを書き込む
+ *  @brief Writes data at the position given by index.
  *
- *  @param[in] index インデックス
- *  @param[in] data 書き込むデータ
- *  @param[in] size 書き込むデータのサイズ
- *  @return 成功したときは書き込んだサイズを返す。
- *  失敗したときは-1を返す。
+ *  @param[in] index index
+ *  @param[in] data data to write
+ *  @param[in] size size of the data to write
+ *  @return the number of bytes written on success.
+ *  -1 on failure.
  */
 ssize_t Rigel::Write(const int index,
                      const unsigned char* data,
@@ -365,13 +366,13 @@ ssize_t Rigel::Write(const int index,
 }
 
 /**
- *  @brief indexで指定した位置からデータを読み込む
+ *  @brief Reads data from the position given by index.
  *
- *  @param[in] index インデックス
- *  @param[in] data 読み込んだデータ
- *  @param[in] size 読み込んだデータのサイズ
- *  @return 成功したときは読み込んだサイズを返す。
- *  失敗したときは-1を返す。
+ *  @param[in] index index
+ *  @param[in] data buffer to read into
+ *  @param[in] size size to read
+ *  @return the number of bytes read on success.
+ *  -1 on failure.
  */
 ssize_t Rigel::Read(const int index,
                     unsigned char* data,
@@ -392,7 +393,7 @@ ssize_t Rigel::Read(const int index,
     return -1;
   }
   if (index < 0 || (size_t)index >= this->index_map_.size) {
-    return -1; // ここまで一度も書き込まれていない(正常系、エラーではない)
+    return -1; // never written this far (normal, not an error)
   }
   if (this->index_map_.ptr[index] != 1) {
     return -1;
@@ -409,10 +410,10 @@ ssize_t Rigel::Read(const int index,
 }
 
 /**
- *  @brief スキャンの初期化
+ *  @brief Initializes a scan.
  *
- *  @return 成功したときはtrueを返す。
- *  失敗したときはfalseを返す。
+ *  @return true on success.
+ *  false on failure.
  */
 bool Rigel::ScanInit(const int start) {
   std::lock_guard<std::mutex> lock(this->mutex_);
@@ -425,10 +426,10 @@ bool Rigel::ScanInit(const int start) {
 }
 
 /**
- *  @brief 次の候補を探し見つかったらindexを返す。
+ *  @brief Finds the next written index and returns it.
  *
- *  @return 成功したときはindexを返す。
- *  失敗したときは-1を返す。
+ *  @return the index on success.
+ *  -1 on failure (nothing left to scan).
  */
 int Rigel::ScanNext() {
   std::lock_guard<std::mutex> lock(this->mutex_);

@@ -1,5 +1,5 @@
 /**
- * RIGEL( Reduced and Indexed Giga-data Engine Library )
+ * RIGEL( Rigid and Indexed Granular-data Engine Library )
  *
  */
 

@@ -1,5 +1,5 @@
 /**
- * RIGEL( Reduced and Indexed Giga-data Engine Library )
+ * RIGEL( Rigid and Indexed Granular-data Engine Library )
  *
  */
 
@@ -21,7 +21,8 @@ const int PACKET_SIZE = 1024;
 
 namespace {
 
-// ファイル名（例: ".../123456789-foo.dat"）から先頭9桁のタイムスタンプを取り出す。
+// Extracts the leading 9-digit timestamp from a filename
+// (e.g. ".../123456789-foo.dat").
 int ParseTotalSecFromFilename(const char* path) {
   std::string s(path);
   size_t slash = s.find_last_of('/');

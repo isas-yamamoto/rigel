@@ -1,150 +1,160 @@
 # Rigel
 
-**RIGEL** ( Reduced and Indexed Giga-data Engine Library )
+**RIGEL** ( Rigid and Indexed Granular-data Engine Library )
 
-連番の整数ID（0, 1, 2, ...）をキーに、固定長レコードを高速に読み書きするための
-C++ライブラリ。衛星テレメトリ(REDACTED/REDACTED搭載機器)のような、時刻に対応する
-固定サイズパケットを大量に蓄積・参照する用途を想定している。
+A C++ library for fast reads/writes of fixed-size records keyed by a
+sequential integer ID (0, 1, 2, ...). Built for cases like satellite
+telemetry (e.g. the REDACTED/REDACTED spacecraft's instruments), where large
+volumes of fixed-size packets need to be stored and looked up by time.
 
-## 特徴
+## Features
 
-- **index = 整数ID → offset は計算のみ (`index * block_size`)**。B木もハッシュ
-  も持たない。位置計算はO(1)。
-- 1本のファイルが肥大化しないよう、`max_file_count` ブロックごとに物理ファイル
-  を分割する（shard）。`index` から `file_index`/`file_offset` を割り出して
-  該当shardにアクセスする。
-- 各indexに「書き込み済みか」を1byteで持つ別ファイル(`.index`)を併設。未書き込み
-  のindexを読もうとすると失敗を返す。
-- データファイル・indexファイルは `mmap` している。一度開いたら閉じず、以後は
-  ポインタ演算 + `memcpy` のみで読み書きする。
-- 1ディレクトリ = 1系列(key)。`rigel_init` コマンドで `key`/`block_size`/
-  `max_file_count` をディレクトリ配下のメタデータファイルに書いておけば、
-  以後は `Init(dirname)` だけで済む（下記参照）。
-- 1つの`Rigel`インスタンスを複数スレッドから共有してWrite/Read/ScanInit/
-  ScanNextを同時に呼んでも安全（内部で1本のmutexにより直列化。詳細は
-  下記「スレッド安全性」参照）。
+- **index = integer ID -> offset is pure arithmetic (`index * block_size`)**.
+  No B-tree, no hash table. Lookup is O(1).
+- To keep any single file from growing without bound, records are split
+  across physical files (shards) every `max_file_count` blocks. `index` is
+  resolved into a `file_index`/`file_offset` pair to reach the right shard.
+- A separate file (`.index`) holds one byte per index recording whether it
+  has been written. Reading an index that was never written fails.
+- Data and index files are `mmap`'d. Once opened they stay open; after that
+  it's just pointer arithmetic + `memcpy`.
+- One directory = one series (key). The `rigel_init` command writes
+  `key`/`block_size`/`max_file_count` into a metadata file under the
+  directory, after which `Init(dirname)` alone is enough (see below).
+- A single `Rigel` instance can be shared across threads, calling
+  Write/Read/ScanInit/ScanNext concurrently (serialized internally by one
+  mutex - see "Thread safety" below).
 
-## ビルド
+## Building
 
 ```sh
 cd src
-make CXX=g++          # ライブラリ・付属ツール・testを一括ビルド
-make CXX=g++ check     # test を実行
+make CXX=g++          # builds the library, its tools, and the test suite
+make CXX=g++ check     # runs the test suite
 ```
 
-C++11以上が必要（`std::regex`, `std::unordered_map`, `std::fstream` の
-move対応を使用）。
+Requires C++11 or later (uses `std::regex`, `std::unordered_map`, and
+`std::fstream`'s move support).
 
-生成物:
+Build outputs:
 
-| 種類 | 名前 |
+| kind | name |
 |---|---|
-| 共有ライブラリ | `librigel.so` |
-| 静的ライブラリ | `librigel.a` |
-| ヘッダ | `rigel.h` |
-| CLIツール | `rigel_read` `rigel_write` `rigel_scan` `rigel_ccsds_size` `rigel_init` |
-| テスト | `test` |
+| shared library | `librigel.so` |
+| static library | `librigel.a` |
+| header | `rigel.h` |
+| CLI tools | `rigel_read` `rigel_write` `rigel_scan` `rigel_ccsds_size` `rigel_init` |
+| test suite | `test` |
 
-## 使い方
+## Usage
 
-まず `rigel_init` でディレクトリを初期化する（1回だけ）。
+First, initialize the directory with `rigel_init` (once):
 
 ```sh
 ./rigel_init /path/to/data mykey 1024 131072   # dirname key block_size max_file_count
 ```
 
-これで `/path/to/data/rigel.meta` にkey/block_size/max_file_countが書き込まれる。
-既にメタデータがあるディレクトリに対しては（既存データが壊れるため）実行を拒否
-する。block_size/max_file_countを省略すると既定値（`BLOCK_SIZE`=1024,
-`MAX_FILE_COUNT`=131072）が使われる。
+This writes key/block_size/max_file_count into
+`/path/to/data/rigel.meta`. It refuses to run against a directory that
+already has metadata (since that would corrupt existing data).
+block_size/max_file_count default to `BLOCK_SIZE`=1024 and
+`MAX_FILE_COUNT`=131072 if omitted.
 
-あとはコード側は `Init(dirname)` だけで良い:
+From then on, the code side only needs `Init(dirname)`:
 
 ```cpp
 #include "rigel.h"
 
 rigel::Rigel rigel;
 if (!rigel.Init("/path/to/data")) {
-  fprintf(stderr, "init failed: %s\n", rigel.LastError());  // rigel_init前 or メタデータ破損
+  fprintf(stderr, "init failed: %s\n", rigel.LastError());  // before rigel_init, or corrupt metadata
 }
 
 unsigned char buf[1024] = { ... };
 rigel.Write(index, buf, sizeof(buf));
 
 unsigned char rbuf[1024];
-ssize_t n = rigel.Read(index, rbuf, sizeof(rbuf));  // 未書き込みなら -1
+ssize_t n = rigel.Read(index, rbuf, sizeof(rbuf));  // -1 if never written
 
 rigel.ScanInit();
 int idx;
 while ((idx = rigel.ScanNext()) >= 0) {
-  // idx に書き込まれたレコードが存在する
+  // a record exists at idx
 }
 ```
 
-block_size/max_file_countをコード側で明示的に指定したい場合（テストで小さい
-shardを使いたい場合など）は、従来通り `Init(dirname, key, block_size,
-max_file_count)` も使える。
+If you want to specify block_size/max_file_count explicitly from code
+(e.g. small shards for tests), `Init(dirname, key, block_size,
+max_file_count)` is still available.
 
-`dirname` 配下には `rigel.meta` の他、`<key>.<file_index 4桁>` というデータ
-ファイルと `<key>.index` というインデックスファイルが作られる。
+Besides `rigel.meta`, `dirname` ends up containing data files named
+`<key>.<4-digit file_index>` and an index file named `<key>.index`.
 
-## テスト
+## Tests
 
-- `src/test.cc` : Write/Read一致、複数ファイルへの分割、Scan列挙、範囲外indexの
-  安全な失敗、メタデータ経由の`Init(dirname)`、複数スレッドからの同時Write/Read
-  を確認する実動作テスト（`make check` で実行）。
-- スレッド安全性はThreadSanitizerでも検証済み:
+- `src/test.cc`: a functional test covering Write/Read consistency,
+  splitting across multiple files, Scan enumeration, safe failure on
+  out-of-range indices, `Init(dirname)` via metadata, and concurrent
+  Write/Read from multiple threads (run via `make check`).
+- Thread safety is also verified with ThreadSanitizer:
   `g++ -std=c++11 -fsanitize=thread -pthread rigel.cc test.cc -o test_tsan`
-  （通常の`make check`は機能的な正しさのみ確認し、raceの有無はThreadSanitizer
-  でしか判定できない点に注意）。
-- 同様にAddressSanitizer+UndefinedBehaviorSanitizerでもメモリ安全性/UBを検証:
+  (plain `make check` only checks functional correctness - only
+  ThreadSanitizer can actually tell whether a race exists).
+- Likewise, memory safety/UB is checked with AddressSanitizer +
+  UndefinedBehaviorSanitizer:
   `g++ -std=c++11 -fsanitize=address,undefined -pthread rigel.cc test.cc -o test_asan`
 
 ## CI
 
-`.github/workflows/ci.yml` がpush/PR毎に以下を全部実行する:
+`.github/workflows/ci.yml` runs all of the following on every push/PR:
 
-| job | 内容 |
+| job | what it does |
 |---|---|
-| `build-and-test` | 通常ビルド + `make check` |
-| `strict-warnings` | `-Wall -Wextra -Werror` で再ビルド（警告即エラー） |
-| `thread-sanitizer` | ThreadSanitizerでrace検出 |
-| `address-ub-sanitizer` | AddressSanitizer+UBSanでメモリ安全性/UB検出 |
-| `cppcheck` | 静的解析（`warning`/`performance`/`portability`カテゴリ、findingがあれば失敗） |
+| `build-and-test` | normal build + `make check` |
+| `strict-warnings` | rebuilds with `-Wall -Wextra -Werror` (warnings fail the build) |
+| `thread-sanitizer` | catches races with ThreadSanitizer |
+| `address-ub-sanitizer` | catches memory-safety/UB issues with AddressSanitizer+UBSan |
+| `cppcheck` | static analysis (`warning`/`performance`/`portability` categories; fails on any finding) |
 
-## スレッド安全性
+## Thread safety
 
-- 1つの`Rigel`インスタンスに対して、複数スレッドから`Write`/`Read`/`ScanInit`/
-  `ScanNext`を同時に呼んでも安全。内部の共有状態(mmap済み領域の管理・scan位置)
-  は1本の`std::mutex`で保護している。
-- 実装は粗粒度: 呼び出し毎に1本のmutexで丸ごと直列化するため、異なるshardへの
-  アクセスであっても実際には並列実行されない（スレッド安全性の単純さ・確実さ
-  を優先し、並行スループットは狙っていない）。より高い並行スループットが必要
-  になった場合は、shard単位のロック分割などが次のステップ。
-- 対象外: 複数「プロセス」から同じディレクトリへ同時に書き込む場合の排他制御
-  （flock等のファイルロック）は行っていない。プロセス間の同時書き込みが必要な
-  場合は呼び出し側で調整すること。
+- A single `Rigel` instance is safe to call `Write`/`Read`/`ScanInit`/
+  `ScanNext` on concurrently from multiple threads. Its shared state
+  (mmap'd region bookkeeping, scan position) is protected by one
+  `std::mutex`.
+- The implementation is coarse-grained: one mutex serializes every call,
+  so even access to unrelated shards never actually runs in parallel
+  (prioritizing simple, clearly-correct thread safety over concurrent
+  throughput). Per-shard locking would be the next step if higher
+  concurrent throughput is ever needed.
+- Out of scope: no exclusion is done for concurrent writes from multiple
+  *processes* to the same directory (no flock or other file locking). If
+  that's needed, arrange it at the call site.
 
-## エラー処理・ログ規約
+## Error handling & logging conventions
 
-- ライブラリ自身は基本的にstderrへ何も出力しない。実際のI/Oエラー(open/fstat/
-  ftruncate/mmapの失敗)は`errno`由来の理由込みで`LastError()`に記録するだけで、
-  出力するかどうか・どこに出すかは呼び出し側が決める。
-  例外は`WriteMeta()`（static、インスタンスが無く`LastError()`に載せられない
-  ため、失敗時のみ直接stderrに出す）。
-- `Write`/`Read`/`ScanInit`/`Init(dirname)`が失敗(`-1`/`false`)を返した直後に
-  `LastError()`を呼べば理由が取れる。次にこのインスタンスへの呼び出しが起きる
-  前に読むこと（1インスタンスにつき1つのバッファを使い回している）。
-- 失敗には2種類ある。**正常系**（未書き込みのindexを`Read`した、など）では
-  `LastError()`はセットされない――呼び出し側のバグではないため。**誤用/実際の
-  エラー**（範囲外のindex、shardサイズを超える書き込み、open/mmapの失敗など）
-  では具体的な理由がセットされる。
-- CLIツール(`rigel_read`等)は`Init()`失敗時に`argv[0]: <LastError()>`という形で
-  stderrへ出す。実装例として参照可。
+- The library itself prints nothing to stderr by default. Real I/O errors
+  (open/fstat/ftruncate/mmap failures) are recorded into `LastError()`
+  with the reason from `errno`; whether and where to print that is left
+  to the caller. The one exception is `WriteMeta()` (static, so there's
+  no instance to attach a `LastError()` to - it prints directly to stderr
+  on failure).
+- Call `LastError()` right after `Write`/`Read`/`ScanInit`/`Init(dirname)`
+  returns a failure (`-1`/`false`) to get the reason. Read it before
+  another call is made on this instance (one buffer is reused per
+  instance).
+- There are two kinds of failure. **Normal control flow** (e.g. `Read`ing
+  an index that was never written) does not set `LastError()` - it isn't
+  a bug. **Misuse / real errors** (an out-of-range index, a write
+  exceeding a shard's bounds, an open/mmap failure, etc.) do set a
+  specific reason.
+- The CLI tools (`rigel_read` etc.) print `argv[0]: <LastError()>` to
+  stderr when `Init()` fails - see them for a usage example.
 
-## 制約・注意点
+## Limitations
 
-- `Read`/`Write`ともfsync/msyncは行わない。OSクラッシュ・電源断に対する耐性は
-  ページキャッシュ止まり（プロセスクラッシュには強い）。
-- indexファイルは書き込まれた最大indexに応じて伸長する（1MiB単位）。データ
-  ファイルは `block_size * max_file_count` で決まる固定長。
+- Neither `Read` nor `Write` calls fsync/msync. Durability stops at the
+  page cache (resilient to a process crash, not to an OS crash or power
+  loss).
+- The index file grows (1MiB at a time) to match the highest index
+  written. Each data file has a fixed size of `block_size * max_file_count`.

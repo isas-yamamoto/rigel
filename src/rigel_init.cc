@@ -1,12 +1,13 @@
 /**
- * rigel_init: Rigelデータディレクトリにメタデータ(key/block_size/max_file_count)
- * を書き込む。
+ * rigel_init: writes metadata (key/block_size/max_file_count) into a Rigel
+ * data directory.
  *
  * Usage: rigel_init <dirname> <key> [block_size] [max_file_count]
  *
- * 一度メタデータを書いたディレクトリに対して、異なるblock_size/max_file_count
- * で再度initすると、以後のRead()のオフセット計算が既存データと食い違って
- * 読み出しが壊れるため、既にメタデータがあるディレクトリへの上書きは拒否する。
+ * Re-running init on a directory that already has metadata, with a
+ * different block_size/max_file_count, would make Read()'s offset math
+ * disagree with the data already written there and corrupt reads - so
+ * this refuses to overwrite an existing directory's metadata.
  */
 #include <cstdio>
 #include <cstdlib>
@@ -40,7 +41,7 @@ int main(int argc, char** argv) {
   }
 
   if (!rigel::Rigel::WriteMeta(dirname, key, block_size, max_file_count)) {
-    // WriteMeta自体が失敗理由をstderrに出す。
+    // WriteMeta itself already prints the failure reason to stderr.
     return 1;
   }
 

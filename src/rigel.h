@@ -21,29 +21,29 @@ namespace rigel {
 
   const int BUF_SIZE = 4096;
 
-  // 1つのRigelインスタンスをスレッド間で共有し、Write/Read/ScanInit/ScanNextを
-  // 複数スレッドから同時に呼んでも安全（内部で1本のmutexにより直列化される）。
-  // ただし複数「プロセス」から同じディレクトリへ同時に書き込む場合の排他は
-  // 対象外（flock等のファイルロックは行っていない）。
+  // A single Rigel instance can be shared across threads: Write/Read/
+  // ScanInit/ScanNext may be called concurrently (serialized internally by
+  // one mutex). Concurrent writes from multiple *processes* to the same
+  // directory are out of scope (no flock or other file locking is done).
   class Rigel {
 
  public:
     Rigel();
     virtual ~Rigel();
 
-    // dirname/key/block_size/max_file_countを直接指定する版。
+    // Initializes with dirname/key/block_size/max_file_count given directly.
     virtual void Init(const char* dirname,
                       const char* key,
                       const int block_size=BLOCK_SIZE,
                       const int max_file_count=MAX_FILE_COUNT);
 
-    // dirname配下のメタデータファイル(WriteMetaで書かれたもの)からkey/
-    // block_size/max_file_countを読み込んで初期化する版。
-    // メタデータが無い/壊れている場合はfalseを返す。
+    // Initializes by reading key/block_size/max_file_count from the
+    // metadata file under dirname (written by WriteMeta). Returns false if
+    // the metadata is missing or malformed.
     virtual bool Init(const char* dirname);
 
-    // key/block_size/max_file_countをdirname配下にメタデータとして書き込む。
-    // 通常はrigel_initコマンドから呼ばれる。
+    // Writes key/block_size/max_file_count as metadata under dirname.
+    // Normally called from the rigel_init command.
     static bool WriteMeta(const char* dirname,
                           const char* key,
                           const int block_size=BLOCK_SIZE,
@@ -60,19 +60,21 @@ namespace rigel {
     virtual bool ScanInit(const int start=0);
     virtual int ScanNext();
 
-    // 直近の失敗の詳細(errno由来のメッセージ含む)を返す。Write/Read/ScanInit/
-    // Init(dirname)が失敗を返した直後に呼ぶことを想定している。
-    // "書き込まれていないindexを読んだ"のような正常系の失敗ではセットされない
-    // (実際のI/Oエラー・誤用のみが対象)。マルチスレッドで使う場合、他スレッドが
-    // 次の呼び出しを行う前に読むこと（1インスタンスにつき1つのバッファを使い
-    // 回している）。
+    // Returns details of the most recent failure (including an
+    // errno-derived message where relevant). Meant to be called right
+    // after Write/Read/ScanInit/Init(dirname) returns a failure. Not set
+    // for normal, expected failures such as reading an index that was
+    // never written (only real I/O errors or misuse set it). In
+    // multithreaded use, read it before another thread makes the next
+    // call (one buffer is reused per instance).
     const char* LastError() const;
 
  private:
 
-    // 1つのデータファイル(file_index毎、max_file_size_バイト固定長)をmmapしたもの。
-    // サイズはInit()のパラメータで決まる固定値なので、一度作れば伸長は不要で
-    // 以後はポインタ演算+memcpyのみになる。
+    // A single data file (one per file_index, fixed at max_file_size_
+    // bytes) mmap'd in full. Since the size is fixed by Init()'s
+    // parameters, it never needs to grow once created; afterwards it's
+    // just pointer arithmetic + memcpy.
     struct DataMapping {
       int fd;
       unsigned char* ptr;
@@ -80,9 +82,8 @@ namespace rigel {
       DataMapping() : fd(-1), ptr(NULL), size(0) {}
     };
 
-    // インデックスファイル(1byte/indexの存在フラグ)をmmapしたもの。
-    // 書き込まれるindexの最大値に応じて伸長するため、必要になったら
-    // ftruncate + 再mmapする。
+    // The index file (1 byte per index, a presence flag) mmap'd. Grows via
+    // ftruncate + remap as needed, based on the highest index written.
     struct IndexMapping {
       int fd;
       unsigned char* ptr;
@@ -101,21 +102,24 @@ namespace rigel {
     // for Scan
     int scan_pos_;
 
-    // 直近の失敗のメッセージ。SetError()で書き込み、LastError()で読む。
+    // Message for the most recent failure. Written by SetError(), read by
+    // LastError().
     char last_error_[512];
 
-    // data_maps_/index_map_/scan_pos_/last_error_ へのアクセスはこのmutexで
-    // 直列化する。Write/Read/ScanInit/ScanNextの入口で1本ロックする粗粒度な
-    // 実装であり、異なるshardへの同時アクセスであっても並列には走らない
-    // (スレッド安全性を単純かつ確実にすることを優先している)。
-    // mutableなのはconstメソッドであるLastError()からもロックするため。
+    // Access to data_maps_/index_map_/scan_pos_/last_error_ is serialized
+    // by this mutex. Coarse-grained by design: locked once at the entry of
+    // Write/Read/ScanInit/ScanNext, so even unrelated shards never run
+    // concurrently (prioritizes simple, clearly-correct thread safety over
+    // concurrent throughput). Mutable so the const method LastError() can
+    // lock it too.
     mutable std::mutex mutex_;
 
     void DataFilename(int file_index, char* buf, size_t buflen) const;
     void IndexFilename(char* buf, size_t buflen) const;
 
-    // 呼び出し側は必ずmutex_を保持した状態で呼ぶこと(自身ではロックしない。
-    // Write/Read/ScanInit/ScanNextから既にロック済みの状態で呼ばれる前提)。
+    // Callers must already hold mutex_ (this does not lock it itself; it's
+    // only ever called from within Write/Read/ScanInit/Init(dirname),
+    // which have already locked it).
     void SetError(const char* fmt, ...);
 
     DataMapping* GetDataMapping(int file_index);

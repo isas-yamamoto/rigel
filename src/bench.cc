@@ -1,8 +1,8 @@
 /**
- * Rigel Read/Write のベンチマーク
+ * Benchmark for Rigel Read/Write.
  *
- * 引数: n [order]
- *   order = "seq"(既定) 逐次アクセス / "rand" シャッフルしたランダムアクセス
+ * Args: n [order]
+ *   order = "seq" (default) sequential access / "rand" shuffled random access
  */
 #include <algorithm>
 #include <chrono>

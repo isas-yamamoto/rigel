@@ -1,9 +1,9 @@
 /**
- * Rigel クラスの簡易動作確認テスト
+ * Simple functional test for the Rigel class.
  *
- * data/index ファイルを実際に作成し、Write/Read の一致、
- * 複数ファイルへの分割（ロールオーバー）、Scan の列挙、
- * 不正な index に対する安全な失敗を確認する。
+ * Creates real data/index files and checks Write/Read consistency,
+ * splitting across multiple files (rollover), Scan enumeration, and
+ * safe failure on invalid indices.
  */
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -28,7 +28,7 @@ int main() {
   const char* dir = "/tmp/rigel_test";
   ::mkdir(dir, 0755);
 
-  // block_size=64, max_file_count=2 -> max_file_size=128 -> 1ファイルにつき2ブロック
+  // block_size=64, max_file_count=2 -> max_file_size=128 -> 2 blocks per file
   const int block_size = 64;
   const int max_file_count = 2;
 
@@ -40,7 +40,7 @@ int main() {
     std::memset(wbuf[i], 'A' + i, block_size);
   }
 
-  // index 0,1 は1ファイル目、2,3 は2ファイル目に分かれる
+  // indices 0,1 land in the first file, 2,3 in the second
   for (int i = 0; i < 4; ++i) {
     ssize_t r = rigel.Write(i, wbuf[i], block_size);
     check(r == (ssize_t)block_size, "Write returns full block size");
@@ -53,14 +53,15 @@ int main() {
     check(std::memcmp(rbuf, wbuf[i], block_size) == 0, "Read data matches Write data");
   }
 
-  // 一度も書いていない index は index ファイル上のフラグが立たず読めない
+  // An index that was never written has no flag set in the index file
   {
     unsigned char rbuf[block_size];
     ssize_t r = rigel.Read(100, rbuf, block_size);
     check(r == -1, "Read of unwritten index fails");
   }
 
-  // 明らかに範囲外の index は file_index が MAX_FILE_INDEX を超え、安全に失敗する
+  // A clearly out-of-range index pushes file_index past MAX_FILE_INDEX and
+  // fails safely
   {
     unsigned char rbuf[block_size];
     long long huge_index = (long long)rigel::MAX_FILE_INDEX * max_file_count + 1000;
@@ -68,7 +69,7 @@ int main() {
     check(r == -1, "Read of out-of-range index fails safely");
   }
 
-  // Scan で書き込んだ index 0..3 が列挙されること
+  // Scan enumerates the written indices 0..3
   {
     bool seen[4] = {false, false, false, false};
     int count = 0;
@@ -80,20 +81,20 @@ int main() {
       }
       count++;
       if (count > 1000) {
-        break; // 無限ループ防止
+        break; // guard against an infinite loop
       }
     }
     check(seen[0] && seen[1] && seen[2] && seen[3], "Scan enumerates all written indices");
   }
 
-  // ScanInit(start) はstartより前のindexを飛ばす
+  // ScanInit(start) skips indices before start
   {
     check(rigel.ScanInit(2), "ScanInit(start=2) succeeds");
     int idx = rigel.ScanNext();
     check(idx == 2, "ScanInit(start) skips indices before start");
   }
 
-  // メタデータ経由のInit(dirname)
+  // Init(dirname) via metadata
   {
     const char* meta_dir = "/tmp/rigel_test_meta";
     ::mkdir(meta_dir, 0755);
@@ -113,8 +114,8 @@ int main() {
           "Init(dirname) fails when metadata is missing");
   }
 
-  // LastError(): 正常系(未書き込みindexの読み込み)ではセットされず、
-  // 誤用(範囲外index)では具体的な理由が載ることを確認する。
+  // LastError(): not set for a normal failure (reading an unwritten index),
+  // but populated with a specific reason after misuse (out-of-range index).
   {
     const char* err_dir = "/tmp/rigel_test_lasterror";
     ::mkdir(err_dir, 0755);
@@ -136,22 +137,24 @@ int main() {
           "LastError reports the out-of-range reason after misuse");
   }
 
-  // スレッド安全性: 複数スレッドから同一Rigelインスタンスへ同時にWrite/Readしても
-  // 壊れないことを確認する(shardを跨ぐ書き込みでdata_maps_への挿入も競合させる)。
+  // Thread safety: concurrent Write/Read from multiple threads on one
+  // shared Rigel instance must not corrupt anything (writes span multiple
+  // shards, contending on data_maps_ insertion too).
   {
     const char* mt_dir = "/tmp/rigel_test_mt";
     ::mkdir(mt_dir, 0755);
 
     const int mt_block_size = 64;
-    const int mt_max_file_count = 2; // 2indexごとにshardが変わるようにする
+    const int mt_max_file_count = 2; // shard changes every 2 indices
     const int num_threads = 8;
     const int per_thread = 50;
 
     rigel::Rigel mt_rigel;
     mt_rigel.Init(mt_dir, "mt", mt_block_size, mt_max_file_count);
 
-    // vector<bool>はビット詰め実装のため異なるindexへの同時書き込みでも
-    // 同じwordを共有し偽の競合になる(TSanで確認済み)。charを使う。
+    // vector<bool> is bit-packed, so concurrent writes to different indices
+    // from different threads would touch the same backing word and race
+    // (confirmed with TSan). Use char instead.
     std::vector<char> write_ok(num_threads * per_thread, 0);
     std::vector<std::thread> threads;
     for (int t = 0; t < num_threads; ++t) {
