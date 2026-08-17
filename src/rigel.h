@@ -6,7 +6,6 @@
 #include <list>
 #include <mutex>
 #include <unordered_map>
-#include "google.h"
 
 namespace rigel {
 
@@ -167,7 +166,8 @@ namespace rigel {
     bool OpenIndexMapping();
     bool EnsureIndexSize(size_t min_size);
 
-    DISALLOW_COPY_AND_ASSIGN(Rigel);
+    Rigel(const Rigel&) = delete;
+    Rigel& operator=(const Rigel&) = delete;
   };
 
 } // namespace rigel
