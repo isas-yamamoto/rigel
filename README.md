@@ -8,6 +8,39 @@ sequential integer ID (0, 1, 2, ...).
 Licensed under the [MIT License](LICENSE). Current version: `1.0.0`
 (see `rigel::VERSION` in `rigel.h`, or run `rigel version`).
 
+## What is this, and when would I use it?
+
+Rigel is *not* a database engine - it has no SQL, no schema, no
+secondary indexes, no transactions. It's a much smaller piece: a
+slotted array of fixed-size records on disk, where "index N" always
+maps to the same byte offset (`index * block_size`) via pure
+arithmetic, `mmap`'d for speed. Think of it as the storage layer you'd
+build a database *on top of*, not a replacement for one.
+
+**Reach for Rigel when:**
+- Records are addressed by a dense, sequential integer key - a tick
+  count, a frame/sample number, a sensor reading index - not an
+  arbitrary string or a value you'd look up by range/content.
+- Records are fixed-size, or can be padded/truncated to one (Rigel
+  stores raw bytes; you own the serialization format).
+- You want O(1) offset computation with no B-tree/hash overhead, and
+  you're fine handling durability (fsync), locking across processes,
+  and schema evolution yourself (see "Limitations" below).
+
+**Reach for SQLite (or Postgres, LevelDB, etc.) instead when** you need
+variable-length records, lookup by arbitrary/string keys or content,
+range queries beyond "everything scanned so far", joins, multi-record
+ACID transactions, or a schema that can evolve without a data
+migration.
+
+A concrete fit: telemetry or sensor samples that arrive labeled with a
+monotonically increasing sequence number, where each sample is the
+same size and "give me sample N" (or "list every sample received so
+far") is the only access pattern that matters. `freeze`/`unfreeze` (see
+"Usage" below) exists for exactly this shape of data: mark a batch
+read-only once it's finished, without giving up the ability to keep
+reading/scanning it.
+
 ## Features
 
 - **index = integer ID -> offset is pure arithmetic (`index * block_size`)**.
