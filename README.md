@@ -7,6 +7,8 @@ sequential integer ID (0, 1, 2, ...). Built for cases like satellite
 telemetry, where large volumes of fixed-size packets need to be stored
 and looked up by time.
 
+Licensed under the [MIT License](LICENSE).
+
 ## Features
 
 - **index = integer ID -> offset is pure arithmetic (`index * block_size`)**.
@@ -168,3 +170,8 @@ Besides `rigel.meta`, `dirname` ends up containing data files named
   loss).
 - The index file grows (1MiB at a time) to match the highest index
   written. Each data file has a fixed size of `block_size * max_file_count`.
+- Open data shards are capped (least-recently-used ones are evicted -
+  munmap'd and closed - once the cap is exceeded), so a long-lived
+  process that touches many shards over its lifetime doesn't accumulate
+  an unbounded number of open file descriptors or mmap'd regions. A
+  shard evicted and later touched again is simply reopened.

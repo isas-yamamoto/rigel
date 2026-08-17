@@ -3,6 +3,7 @@
 
 #include <sys/param.h>
 #include <sys/types.h>
+#include <list>
 #include <mutex>
 #include <unordered_map>
 #include "google.h"
@@ -107,7 +108,14 @@ namespace rigel {
     char dirname_[MAXPATHLEN];
     char key_[MAX_KEY_SIZE];
 
+    // Bounded to MAX_OPEN_SHARDS entries (see rigel.cc) so a long-lived
+    // process that touches many shards doesn't accumulate an unbounded
+    // number of open file descriptors / mmap'd regions. lru_order_ holds
+    // file_index values, most-recently-used at the front; lru_pos_ gives
+    // O(1) access to each one's list node for move-to-front/erase.
     std::unordered_map<int, DataMapping> data_maps_;
+    std::list<int> lru_order_;
+    std::unordered_map<int, std::list<int>::iterator> lru_pos_;
     IndexMapping index_map_;
 
     // for Scan
@@ -134,6 +142,8 @@ namespace rigel {
     void SetError(const char* fmt, ...);
 
     DataMapping* GetDataMapping(int file_index);
+    void TouchShard(int file_index);
+    void EvictShardsIfNeeded();
     bool OpenIndexMapping();
     bool EnsureIndexSize(size_t min_size);
 

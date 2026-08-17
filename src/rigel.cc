@@ -21,6 +21,16 @@ namespace rigel
 namespace {
 const size_t INDEX_GROW_CHUNK = 1 << 20; // grow the index file 1MiB at a time
 const char META_FILENAME[] = "rigel.meta";
+
+// Caps how many data shards can be mmap'd/open at once. Without this, a
+// long-lived process that touches many distinct shards over its lifetime
+// would accumulate one open fd + one mmap'd region per shard forever,
+// eventually hitting RLIMIT_NOFILE or running out of address space.
+// Evicting the least-recently-used shard when this is exceeded keeps
+// resource use bounded regardless of how many shards get touched overall;
+// the cost is that a shard evicted and then touched again has to be
+// reopened (one extra open+ftruncate+mmap, same as a first touch).
+const size_t MAX_OPEN_SHARDS = 1024;
 }
 
 /**
@@ -197,6 +207,7 @@ void Rigel::IndexFilename(char* buf, size_t buflen) const {
 Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
   std::unordered_map<int, DataMapping>::iterator it = this->data_maps_.find(file_index);
   if (it != this->data_maps_.end()) {
+    this->TouchShard(file_index);
     return &it->second;
   }
 
@@ -239,7 +250,45 @@ Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
 
   std::pair<std::unordered_map<int, DataMapping>::iterator, bool> res =
       this->data_maps_.insert(std::make_pair(file_index, m));
+  this->TouchShard(file_index);
+  this->EvictShardsIfNeeded();
   return &res.first->second;
+}
+
+/**
+ *  @brief Marks file_index as the most recently used shard.
+ */
+void Rigel::TouchShard(int file_index) {
+  std::unordered_map<int, std::list<int>::iterator>::iterator pit =
+      this->lru_pos_.find(file_index);
+  if (pit != this->lru_pos_.end()) {
+    this->lru_order_.erase(pit->second);
+  }
+  this->lru_order_.push_front(file_index);
+  this->lru_pos_[file_index] = this->lru_order_.begin();
+}
+
+/**
+ *  @brief Closes and unmaps the least-recently-used shards until at most
+ *  MAX_OPEN_SHARDS remain open.
+ */
+void Rigel::EvictShardsIfNeeded() {
+  while (this->data_maps_.size() > MAX_OPEN_SHARDS && !this->lru_order_.empty()) {
+    int victim = this->lru_order_.back();
+    this->lru_order_.pop_back();
+    this->lru_pos_.erase(victim);
+
+    std::unordered_map<int, DataMapping>::iterator it = this->data_maps_.find(victim);
+    if (it != this->data_maps_.end()) {
+      if (it->second.ptr != NULL) {
+        ::munmap(it->second.ptr, it->second.size);
+      }
+      if (it->second.fd >= 0) {
+        ::close(it->second.fd);
+      }
+      this->data_maps_.erase(it);
+    }
+  }
 }
 
 /**

@@ -9,9 +9,34 @@
 #include <sys/types.h>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <thread>
 #include <vector>
 #include "rigel.h"
+
+namespace {
+
+// Best-effort count of this process's open file descriptors, via
+// /proc/self/fd (Linux-specific). Returns -1 if unavailable (e.g. on a
+// non-Linux platform), in which case the caller should skip the check
+// rather than treat it as a failure.
+int CountOpenFds() {
+  DIR* d = ::opendir("/proc/self/fd");
+  if (d == NULL) {
+    return -1;
+  }
+  int count = 0;
+  struct dirent* ent;
+  while ((ent = ::readdir(d)) != NULL) {
+    if (ent->d_name[0] != '.') {
+      count++;
+    }
+  }
+  ::closedir(d);
+  return count;
+}
+
+} // namespace
 
 static int g_fail = 0;
 
@@ -135,6 +160,59 @@ int main() {
     check(r == -1, "Write of out-of-range index fails");
     check(std::strstr(r4.LastError(), "out of range") != NULL,
           "LastError reports the out-of-range reason after misuse");
+  }
+
+  // Shard eviction: touching far more shards than the internal cache holds
+  // must not accumulate one open fd per shard forever, and every record
+  // must still read back correctly afterwards (an evicted shard has to be
+  // transparently reopened).
+  {
+    const char* evict_dir = "/tmp/rigel_test_evict";
+    ::mkdir(evict_dir, 0755);
+
+    // block_size=8, max_file_count=1 -> one shard per index, so this
+    // touches this many distinct shards. Comfortably larger than the
+    // internal shard cache (a few thousand vs. its low-thousands cap) so
+    // the bound is obvious rather than close to the cap itself.
+    const int evict_block_size = 8;
+    const int num_shards = 5000;
+
+    rigel::Rigel evict_rigel;
+    evict_rigel.Init(evict_dir, "evict", evict_block_size, 1);
+
+    unsigned char buf[evict_block_size];
+    int fds_before = CountOpenFds();
+    for (int i = 0; i < num_shards; ++i) {
+      std::memset(buf, (unsigned char)(i & 0xff), evict_block_size);
+      evict_rigel.Write(i, buf, evict_block_size);
+    }
+    int fds_after = CountOpenFds();
+
+    if (fds_before < 0 || fds_after < 0) {
+      std::printf("SKIP: shard eviction fd-count check (/proc/self/fd unavailable)\n");
+    } else {
+      int fds_used = fds_after - fds_before;
+      check(fds_used < num_shards / 2,
+            "touching many shards does not accumulate one fd per shard");
+    }
+
+    bool all_match = true;
+    for (int i = 0; i < num_shards; ++i) {
+      unsigned char rbuf[evict_block_size];
+      ssize_t r = evict_rigel.Read(i, rbuf, evict_block_size);
+      unsigned char expected = (unsigned char)(i & 0xff);
+      if (r != (ssize_t)evict_block_size) {
+        all_match = false;
+        break;
+      }
+      for (int b = 0; b < evict_block_size; ++b) {
+        if (rbuf[b] != expected) {
+          all_match = false;
+          break;
+        }
+      }
+    }
+    check(all_match, "all records read back correctly after evicted shards are reopened");
   }
 
   // Thread safety: concurrent Write/Read from multiple threads on one
