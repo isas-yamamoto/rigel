@@ -1,11 +1,18 @@
 /**
- * Rigel Read/Write のベンチマーク（毎回open/closeする現行実装のベースライン計測）
+ * Rigel Read/Write のベンチマーク
+ *
+ * 引数: n [order]
+ *   order = "seq"(既定) 逐次アクセス / "rand" シャッフルしたランダムアクセス
  */
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <random>
+#include <string>
 #include <sys/stat.h>
+#include <vector>
 
 #include "rigel.h"
 
@@ -16,6 +23,16 @@ int main(int argc, char** argv) {
   const int block_size = 1024;
   const int max_file_count = 131072; // default MAX_FILE_COUNT
   const int n = (argc > 1) ? std::atoi(argv[1]) : 100000;
+  const std::string order = (argc > 2) ? argv[2] : "seq";
+
+  std::vector<int> indices(n);
+  for (int i = 0; i < n; ++i) {
+    indices[i] = i;
+  }
+  if (order == "rand") {
+    std::mt19937 rng(12345);
+    std::shuffle(indices.begin(), indices.end(), rng);
+  }
 
   rigel::Rigel rigel;
   rigel.Init(dir, "bench", block_size, max_file_count);
@@ -24,23 +41,26 @@ int main(int argc, char** argv) {
   std::memset(buf, 0xAB, block_size);
   unsigned char rbuf[block_size];
 
-  // Write ベンチ（新規index、逐次）
   auto t0 = std::chrono::steady_clock::now();
   for (int i = 0; i < n; ++i) {
-    rigel.Write(i, buf, block_size);
+    rigel.Write(indices[i], buf, block_size);
   }
   auto t1 = std::chrono::steady_clock::now();
 
-  // Read ベンチ（既存index、逐次）
+  if (order == "rand") {
+    std::mt19937 rng(67890);
+    std::shuffle(indices.begin(), indices.end(), rng);
+  }
+
   for (int i = 0; i < n; ++i) {
-    rigel.Read(i, rbuf, block_size);
+    rigel.Read(indices[i], rbuf, block_size);
   }
   auto t2 = std::chrono::steady_clock::now();
 
   double write_ns = std::chrono::duration<double, std::nano>(t1 - t0).count() / n;
   double read_ns  = std::chrono::duration<double, std::nano>(t2 - t1).count() / n;
 
-  std::printf("n=%d block_size=%d\n", n, block_size);
+  std::printf("n=%d block_size=%d order=%s\n", n, block_size, order.c_str());
   std::printf("Write: %.1f ns/op (%.0f ops/sec)\n", write_ns, 1e9 / write_ns);
   std::printf("Read:  %.1f ns/op (%.0f ops/sec)\n", read_ns, 1e9 / read_ns);
 

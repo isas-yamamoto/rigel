@@ -3,7 +3,6 @@
 
 #include <sys/param.h>
 #include <sys/types.h>
-#include <fstream>
 #include <unordered_map>
 #include "google.h"
 
@@ -21,16 +20,11 @@ namespace rigel {
 
   const int BUF_SIZE = 4096;
 
-  enum OpType {
-    kOpNone = 0,
-    kOpRead = 1,
-    kOpWrite = 2,
-  };
-
   class Rigel {
 
  public:
     Rigel();
+    virtual ~Rigel();
 
     virtual void Init(const char* dirname,
                       const char* key,
@@ -50,15 +44,24 @@ namespace rigel {
 
  private:
 
-    // Read/Write 用のファイルハンドル。開いたら閉じず使い回し、
-    // かつ直前の操作から位置が動いていなければ seek もスキップする。
-    // (C++の規格上、read <-> write を切り替える際は間に seek が要るので、
-    //  位置と直前操作の種別(last_op)の両方が一致したときだけ省略する)
-    struct Handle {
-      std::fstream stream;
-      long long pos;   // -1: 位置不明(未使用/失敗直後)
-      int last_op;     // kOpNone / kOpRead / kOpWrite
-      Handle() : pos(-1), last_op(kOpNone) {}
+    // 1つのデータファイル(file_index毎、max_file_size_バイト固定長)をmmapしたもの。
+    // サイズはInit()のパラメータで決まる固定値なので、一度作れば伸長は不要で
+    // 以後はポインタ演算+memcpyのみになる。
+    struct DataMapping {
+      int fd;
+      unsigned char* ptr;
+      size_t size;
+      DataMapping() : fd(-1), ptr(NULL), size(0) {}
+    };
+
+    // インデックスファイル(1byte/indexの存在フラグ)をmmapしたもの。
+    // 書き込まれるindexの最大値に応じて伸長するため、必要になったら
+    // ftruncate + 再mmapする。
+    struct IndexMapping {
+      int fd;
+      unsigned char* ptr;
+      size_t size;
+      IndexMapping() : fd(-1), ptr(NULL), size(0) {}
     };
 
     int block_size_;
@@ -66,26 +69,18 @@ namespace rigel {
     char dirname_[MAXPATHLEN];
     char key_[MAX_KEY_SIZE];
 
-    std::unordered_map<int, Handle> data_handles_;
-    Handle index_handle_;
+    std::unordered_map<int, DataMapping> data_maps_;
+    IndexMapping index_map_;
 
     // for Scan
-    std::fstream scan_io;
-    char scan_buf_[BUF_SIZE];
-    int scan_size_;
-    int scan_index_;
-    int scan_offset_;
+    int scan_pos_;
 
     void DataFilename(int file_index, char* buf, size_t buflen) const;
     void IndexFilename(char* buf, size_t buflen) const;
 
-    bool Open(const int index,
-              OpType op,
-              Handle** data_io,
-              Handle** index_io);
-
-    Handle* GetDataHandle(int file_index);
-    Handle* GetIndexHandle();
+    DataMapping* GetDataMapping(int file_index);
+    bool OpenIndexMapping();
+    bool EnsureIndexSize(size_t min_size);
 
     DISALLOW_COPY_AND_ASSIGN(Rigel);
   };

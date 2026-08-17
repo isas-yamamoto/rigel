@@ -4,6 +4,10 @@
  *  @date November 6, 2009 version 0.01
  */
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <cstdio>
 #include <cstring>
 #include "rigel.h"
@@ -11,15 +15,43 @@
 namespace rigel
 {
 
+namespace {
+const size_t INDEX_GROW_CHUNK = 1 << 20; // 1MiB分ずつ伸長
+}
+
 /**
  *  @brief constructor
  *
  */
 Rigel::Rigel()
   : block_size_(0),
-    max_file_size_(0) {
+    max_file_size_(0),
+    scan_pos_(0) {
   this->dirname_[0] = '\0';
   this->key_[0] = '\0';
+}
+
+/**
+ *  @brief destructor
+ *
+ *  mmapしていた領域とファイルディスクリプタを全て解放する。
+ */
+Rigel::~Rigel() {
+  for (std::unordered_map<int, DataMapping>::iterator it = this->data_maps_.begin();
+       it != this->data_maps_.end(); ++it) {
+    if (it->second.ptr != NULL) {
+      ::munmap(it->second.ptr, it->second.size);
+    }
+    if (it->second.fd >= 0) {
+      ::close(it->second.fd);
+    }
+  }
+  if (this->index_map_.ptr != NULL) {
+    ::munmap(this->index_map_.ptr, this->index_map_.size);
+  }
+  if (this->index_map_.fd >= 0) {
+    ::close(this->index_map_.fd);
+  }
 }
 
 /**
@@ -53,115 +85,122 @@ void Rigel::IndexFilename(char* buf, size_t buflen) const {
 }
 
 /**
- *  @brief file_indexに対応するデータファイルのハンドルを返す。
+ *  @brief file_indexに対応するデータファイルをmmapしたものを返す。
  *
- *  一度開いたハンドルはRigelインスタンスが破棄されるまで開いたままにする。
- *  毎回のRead/Writeでopen/closeするコストを避けるため。
+ *  データファイル1つの大きさは max_file_size_ で固定なので、
+ *  一度確保したら伸長は不要（範囲外アクセスはmmap自体が守ってくれる）。
  *
- *  @return 成功したときはハンドルへのポインタ、失敗したときはnullptr。
+ *  @return 成功したときはマッピングへのポインタ、失敗したときはnullptr。
  */
-Rigel::Handle* Rigel::GetDataHandle(int file_index) {
-  Handle& h = this->data_handles_[file_index];
-  if (!h.stream.is_open()) {
-    char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
-    this->DataFilename(file_index, filename, sizeof(filename));
+Rigel::DataMapping* Rigel::GetDataMapping(int file_index) {
+  std::unordered_map<int, DataMapping>::iterator it = this->data_maps_.find(file_index);
+  if (it != this->data_maps_.end()) {
+    return &it->second;
+  }
 
-    h.stream.open(filename, std::ios::in | std::ios::out | std::ios::binary);
-    if (!h.stream.is_open()) {
-      h.stream.clear();
-      h.stream.open(filename, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc);
-    }
-    if (!h.stream.is_open()) {
-      std::fprintf(stderr, "ERROR Rigel::Open filename=%s\n", filename);
-      this->data_handles_.erase(file_index);
+  char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
+  this->DataFilename(file_index, filename, sizeof(filename));
+
+  int fd = ::open(filename, O_RDWR | O_CREAT, 0644);
+  if (fd < 0) {
+    std::fprintf(stderr, "ERROR Rigel::Open filename=%s\n", filename);
+    return NULL;
+  }
+
+  struct stat st;
+  if (::fstat(fd, &st) != 0) {
+    ::close(fd);
+    return NULL;
+  }
+  if ((unsigned long long)st.st_size < this->max_file_size_) {
+    if (::ftruncate(fd, (off_t)this->max_file_size_) != 0) {
+      ::close(fd);
       return NULL;
     }
-    h.pos = -1;
-    h.last_op = kOpNone;
   }
-  return &h;
+
+  void* p = ::mmap(NULL, this->max_file_size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (p == MAP_FAILED) {
+    ::close(fd);
+    return NULL;
+  }
+
+  DataMapping m;
+  m.fd = fd;
+  m.ptr = (unsigned char*)p;
+  m.size = this->max_file_size_;
+
+  std::pair<std::unordered_map<int, DataMapping>::iterator, bool> res =
+      this->data_maps_.insert(std::make_pair(file_index, m));
+  return &res.first->second;
 }
 
 /**
- *  @brief インデックスファイルのハンドルを返す（同様に開きっぱなしにする）。
+ *  @brief インデックスファイルを（未オープンなら）開く。
  *
- *  @return 成功したときはハンドルへのポインタ、失敗したときはnullptr。
- */
-Rigel::Handle* Rigel::GetIndexHandle() {
-  if (!this->index_handle_.stream.is_open()) {
-    char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
-    this->IndexFilename(filename, sizeof(filename));
-
-    this->index_handle_.stream.open(filename, std::ios::in | std::ios::out | std::ios::binary);
-    if (!this->index_handle_.stream.is_open()) {
-      this->index_handle_.stream.clear();
-      this->index_handle_.stream.open(filename, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc);
-    }
-    if (!this->index_handle_.stream.is_open()) {
-      return NULL;
-    }
-    this->index_handle_.pos = -1;
-    this->index_handle_.last_op = kOpNone;
-  }
-  return &this->index_handle_;
-}
-
-/**
- *  @brief indexに対応するデータ/インデックスハンドルを求め、必要なら書き込み/読み込み位置までシークする。
+ *  既に他のプロセス等がindexを書き込んでいた場合は、そのファイルサイズ分だけ
+ *  最初からmmapしておく。
  *
- *  ハンドルの現在位置が既に目的の位置にあり、かつ直前の操作が今回と同じ
- *  read/writeの向きであれば、seekそのものを省略する。
- *  (read/writeの向きが変わる場合は、C++の規格上シークを挟む必要があるため
- *   位置が同じでも必ずseekする)
- *
- *  @param[in] index インデックス
- *  @param[in] op 今回行う操作(kOpRead/kOpWrite)
- *  @param[out] data_io データファイルのハンドル
- *  @param[out] index_io インデックスファイルのハンドル
  *  @return 成功したときはtrueを返す。
- *  失敗したときはfalseを返す。
  */
-bool Rigel::Open(const int index,
-                    OpType op,
-                    Handle** data_io,
-                    Handle** index_io) {
+bool Rigel::OpenIndexMapping() {
+  if (this->index_map_.fd >= 0) {
+    return true;
+  }
 
-  unsigned long long offset = index;
-  offset *= this->block_size_;
+  char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
+  this->IndexFilename(filename, sizeof(filename));
 
-  int file_index  = offset / this->max_file_size_;
-  int file_offset = offset % this->max_file_size_;
+  int fd = ::open(filename, O_RDWR | O_CREAT, 0644);
+  if (fd < 0) {
+    return false;
+  }
+  this->index_map_.fd = fd;
 
-  if (file_index < 0 || file_index >= MAX_FILE_INDEX) {
+  struct stat st;
+  if (::fstat(fd, &st) == 0 && st.st_size > 0) {
+    if (!this->EnsureIndexSize((size_t)st.st_size)) {
+      ::close(fd);
+      this->index_map_.fd = -1;
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ *  @brief インデックスファイルのmmap領域が少なくともmin_sizeバイトになるようにする。
+ *
+ *  既に十分な大きさがあれば何もしない。足りない場合はftruncateで伸長してから
+ *  再mmapする。
+ *
+ *  @return 成功したときはtrueを返す。
+ */
+bool Rigel::EnsureIndexSize(size_t min_size) {
+  if (this->index_map_.size >= min_size) {
+    return true;
+  }
+
+  size_t chunks = (min_size + INDEX_GROW_CHUNK - 1) / INDEX_GROW_CHUNK;
+  size_t new_size = chunks * INDEX_GROW_CHUNK;
+
+  if (::ftruncate(this->index_map_.fd, (off_t)new_size) != 0) {
     return false;
   }
 
-  Handle* data = this->GetDataHandle(file_index);
-  if (data == NULL) {
+  if (this->index_map_.ptr != NULL) {
+    ::munmap(this->index_map_.ptr, this->index_map_.size);
+    this->index_map_.ptr = NULL;
+    this->index_map_.size = 0;
+  }
+
+  void* p = ::mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED, this->index_map_.fd, 0);
+  if (p == MAP_FAILED) {
     return false;
   }
-  if (data->pos != file_offset || data->last_op != op) {
-    data->stream.clear();
-    data->stream.seekg(file_offset, std::ios::beg);
-    data->stream.seekp(file_offset, std::ios::beg);
-  }
-  data->pos = file_offset;
-  data->last_op = op;
 
-  Handle* idx = this->GetIndexHandle();
-  if (idx == NULL) {
-    return false;
-  }
-  if (idx->pos != index || idx->last_op != op) {
-    idx->stream.clear();
-    idx->stream.seekg(index, std::ios::beg);
-    idx->stream.seekp(index, std::ios::beg);
-  }
-  idx->pos = index;
-  idx->last_op = op;
-
-  *data_io = data;
-  *index_io = idx;
+  this->index_map_.ptr = (unsigned char*)p;
+  this->index_map_.size = new_size;
   return true;
 }
 
@@ -177,23 +216,32 @@ bool Rigel::Open(const int index,
 ssize_t Rigel::Write(const int index,
                      const unsigned char* data,
                      size_t size) {
-  Handle *data_io, *index_io;
-  if (this->Open(index, kOpWrite, &data_io, &index_io)) {
-    data_io->stream.write(reinterpret_cast<const char*>(data), size);
-    bool ok = !data_io->stream.fail();
-    data_io->stream.clear();
-    data_io->pos = ok ? (data_io->pos + (long long)size) : -1;
-    ssize_t ret = ok ? (ssize_t)size : -1;
+  unsigned long long offset = (unsigned long long)index * this->block_size_;
+  int file_index  = offset / this->max_file_size_;
+  int file_offset = offset % this->max_file_size_;
 
-    char c = 1;
-    index_io->stream.write(&c,1);
-    bool idx_ok = !index_io->stream.fail();
-    index_io->stream.clear();
-    index_io->pos = idx_ok ? (index_io->pos + 1) : -1;
-
-    return ret;
+  if (file_index < 0 || file_index >= MAX_FILE_INDEX) {
+    return -1;
   }
-  return -1;
+
+  DataMapping* dm = this->GetDataMapping(file_index);
+  if (dm == NULL) {
+    return -1;
+  }
+  if ((size_t)file_offset + size > dm->size) {
+    return -1;
+  }
+  std::memcpy(dm->ptr + file_offset, data, size);
+
+  if (!this->OpenIndexMapping()) {
+    return -1;
+  }
+  if (!this->EnsureIndexSize((size_t)index + 1)) {
+    return -1;
+  }
+  this->index_map_.ptr[index] = 1;
+
+  return (ssize_t)size;
 }
 
 /**
@@ -208,23 +256,32 @@ ssize_t Rigel::Write(const int index,
 ssize_t Rigel::Read(const int index,
                     unsigned char* data,
                     size_t size) {
-  Handle *data_io, *index_io;
-  if (this->Open(index, kOpRead, &data_io, &index_io)) {
-    char c = 0;
-    index_io->stream.read(&c,1);
-    bool index_ok = (index_io->stream.gcount() == 1);
-    index_io->stream.clear();
-    index_io->pos = index_ok ? (index_io->pos + 1) : -1;
+  unsigned long long offset = (unsigned long long)index * this->block_size_;
+  int file_index  = offset / this->max_file_size_;
+  int file_offset = offset % this->max_file_size_;
 
-    if (index_ok && c == 1) {
-      data_io->stream.read(reinterpret_cast<char*>(data), size);
-      std::streamsize n = data_io->stream.gcount();
-      data_io->stream.clear();
-      data_io->pos = (n > 0) ? (data_io->pos + n) : -1;
-      return n > 0 ? (ssize_t)n : -1;
-    }
+  if (file_index < 0 || file_index >= MAX_FILE_INDEX) {
+    return -1;
   }
-  return -1;
+
+  if (!this->OpenIndexMapping()) {
+    return -1;
+  }
+  if (index < 0 || (size_t)index >= this->index_map_.size) {
+    return -1; // ここまで一度も書き込まれていない
+  }
+  if (this->index_map_.ptr[index] != 1) {
+    return -1;
+  }
+
+  DataMapping* dm = this->GetDataMapping(file_index);
+  if (dm == NULL) {
+    return -1;
+  }
+  size_t avail = dm->size - (size_t)file_offset;
+  size_t n = (size < avail) ? size : avail;
+  std::memcpy(data, dm->ptr + file_offset, n);
+  return (ssize_t)n;
 }
 
 /**
@@ -234,23 +291,10 @@ ssize_t Rigel::Read(const int index,
  *  失敗したときはfalseを返す。
  */
 bool Rigel::ScanInit(const int start) {
-  if (this->scan_io.is_open()) {
-    this->scan_io.close();
-  }
-  this->scan_io.clear();
-
-  char filename[MAXPATHLEN + MAX_KEY_SIZE + 32];
-  this->IndexFilename(filename, sizeof(filename));
-  this->scan_io.open(filename, std::ios::in | std::ios::binary);
-  if (!this->scan_io.is_open()) {
+  if (!this->OpenIndexMapping()) {
     return false;
   }
-
-  this->scan_io.seekg(0, std::ios::beg);
-  this->scan_index_ = 0;
-  this->scan_offset_ = 0;
-  this->scan_io.read(this->scan_buf_, BUF_SIZE);
-  this->scan_size_ = (int)this->scan_io.gcount();
+  this->scan_pos_ = 0;
   return true;
 }
 
@@ -261,23 +305,16 @@ bool Rigel::ScanInit(const int start) {
  *  失敗したときは-1を返す。
  */
 int Rigel::ScanNext() {
-  do {
-    if(this->scan_index_ < this->scan_size_) {
-      while (this->scan_index_ < this->scan_size_) {
-        this->scan_index_++;
-        if (this->scan_buf_[this->scan_index_-1] != 0) {
-          return (this->scan_offset_ * BUF_SIZE) + this->scan_index_ - 1;
-        }
-      }
+  if (this->index_map_.ptr == NULL) {
+    return -1;
+  }
+  while ((size_t)this->scan_pos_ < this->index_map_.size) {
+    int idx = this->scan_pos_;
+    this->scan_pos_++;
+    if (this->index_map_.ptr[idx] != 0) {
+      return idx;
     }
-
-    if (this->scan_index_ == this->scan_size_) {
-      this->scan_io.read(this->scan_buf_, BUF_SIZE);
-      this->scan_size_ = (int)this->scan_io.gcount();
-      this->scan_index_ = 0;
-      this->scan_offset_++;
-    }
-  } while (this->scan_size_ > 0);
+  }
   return -1;
 }
 
