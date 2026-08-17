@@ -3,9 +3,7 @@
 **RIGEL** ( Rigid and Indexed Granular-data Engine Library )
 
 A C++ library for fast reads/writes of fixed-size records keyed by a
-sequential integer ID (0, 1, 2, ...). Built for cases like satellite
-telemetry, where large volumes of fixed-size packets need to be stored
-and looked up by time.
+sequential integer ID (0, 1, 2, ...).
 
 Licensed under the [MIT License](LICENSE). Current version: `1.0.0`
 (see `rigel::VERSION` in `rigel.h`, or run `rigel version`).
@@ -14,6 +12,10 @@ Licensed under the [MIT License](LICENSE). Current version: `1.0.0`
 
 - **index = integer ID -> offset is pure arithmetic (`index * block_size`)**.
   No B-tree, no hash table. Lookup is O(1).
+- Each index identifies exactly one record slot. Writing to an index
+  that already has data overwrites it in place - there's no duplicate
+  detection or append-only behavior, the same index always means the
+  same slot.
 - To keep any single file from growing without bound, records are split
   across physical files (shards) every `max_file_count` blocks. `index` is
   resolved into a `file_index`/`file_offset` pair to reach the right shard.
@@ -71,14 +73,13 @@ make install PREFIX=/usr/local     # PREFIX defaults to /usr/local
 make uninstall PREFIX=/usr/local
 ```
 
-`DESTDIR` is also honored for staged installs (`make install DESTDIR=/stage
-PREFIX=/usr/local`).
+`DESTDIR` is also honored for staged installs.
 
-**CMake** (also generates a pkg-config file):
+**CMake** (also generates a pkg-config file; set `CMAKE_INSTALL_PREFIX`
+at configure time so it's reflected correctly in the generated
+`rigel.pc`):
 
 ```sh
-# Set CMAKE_INSTALL_PREFIX at configure time, not just at install time -
-# it's baked into the generated rigel.pc.
 cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr/local
 cmake --build build -j
 cmake --install build
@@ -150,13 +151,9 @@ Besides `rigel.meta`, `dirname` ends up containing data files named
   splitting across multiple files, Scan enumeration, safe failure on
   out-of-range indices, `Init(dirname)` via metadata, and concurrent
   Write/Read from multiple threads (run via `make check`).
-- Thread safety is also verified with ThreadSanitizer:
-  `g++ -std=c++11 -fsanitize=thread -pthread rigel.cc test.cc -o test_tsan`
-  (plain `make check` only checks functional correctness - only
-  ThreadSanitizer can actually tell whether a race exists).
-- Likewise, memory safety/UB is checked with AddressSanitizer +
-  UndefinedBehaviorSanitizer:
-  `g++ -std=c++11 -fsanitize=address,undefined -pthread rigel.cc test.cc -o test_asan`
+- Also verified with ThreadSanitizer and AddressSanitizer+UBSan (see the
+  CI jobs below for the exact build commands) - functional tests alone
+  can't tell whether a race or memory-safety issue exists.
 
 ## CI
 
@@ -173,55 +170,36 @@ Besides `rigel.meta`, `dirname` ends up containing data files named
 
 ## Thread safety
 
-- A single `Rigel` instance is safe to call `Write`/`Read`/`ScanInit`/
-  `ScanNext` on concurrently from multiple threads. Its shared state
-  (mmap'd region bookkeeping, scan position) is protected by one
-  `std::mutex`.
-- The implementation is coarse-grained: one mutex serializes every call,
-  so even access to unrelated shards never actually runs in parallel
-  (prioritizing simple, clearly-correct thread safety over concurrent
-  throughput). Per-shard locking would be the next step if higher
-  concurrent throughput is ever needed.
-- Out of scope: no exclusion is done for concurrent writes from multiple
-  *processes* to the same directory (no flock or other file locking). If
-  that's needed, arrange it at the call site.
+A single `Rigel` instance can be shared across threads: `Write`/`Read`/
+`ScanInit`/`ScanNext` are safe to call concurrently, serialized
+internally by one mutex (simple and clearly correct, not tuned for
+concurrent throughput). Concurrent writes from multiple *processes* to
+the same directory are not synchronized (no flock or other file
+locking) - arrange that at the call site if needed.
 
 ## Error handling & logging conventions
 
-- The library itself prints nothing to stderr by default. Real I/O errors
-  (open/fstat/ftruncate/mmap failures) are recorded into `LastError()`
-  with the reason from `errno`; whether and where to print that is left
-  to the caller. The one exception is `WriteMeta()` (static, so there's
-  no instance to attach a `LastError()` to - it prints directly to stderr
-  on failure).
-- Call `LastError()` right after `Write`/`Read`/`ScanInit`/`Init(dirname)`
-  returns a failure (`-1`/`false`) to get the reason. Read it before
-  another call is made on this instance (one buffer is reused per
-  instance).
-- There are two kinds of failure. **Normal control flow** (e.g. `Read`ing
-  an index that was never written) does not set `LastError()` - it isn't
-  a bug. **Misuse / real errors** (an out-of-range index, a write
-  exceeding a shard's bounds, an open/mmap failure, etc.) do set a
-  specific reason.
-- The `rigel` CLI prints `rigel <subcommand>: <LastError()>` to stderr
-  when a call fails - see `rigel_cli.cc` for a usage example.
+The library doesn't print to stderr by default (the one exception is
+`WriteMeta()`, which has no `Rigel` instance to attach an error to).
+Real I/O errors are recorded into `LastError()` with the `errno`
+reason; call it right after a failing `Write`/`Read`/`ScanInit`/
+`Init(dirname)`. Normal control flow (e.g. reading an index that was
+never written) does not set `LastError()` - only misuse or real errors
+do. The `rigel` CLI prints `rigel <subcommand>: <LastError()>` on
+failure.
 
 ## Security
 
-- `key` is interpolated directly into filesystem paths (`dirname/key.NNNN`,
-  `dirname/key.index`) with no other escaping, so it's restricted to
-  `[A-Za-z0-9_.-]+` (non-empty, no `/`) by both `WriteMeta()` and
-  `Init(dirname)`'s `rigel.meta` parser. Without a path separator allowed
-  in `key`, the path it builds can never escape `dirname` via `../`
-  traversal, regardless of whether `key` came from a trusted caller or
-  from a `rigel.meta` file - which, unlike a `key` passed directly to
-  `Init(dirname, key, ...)`, could in principle be planted or edited by
-  anyone with write access to that directory, independent of who's
-  actually running `rigel`/calling `Init(dirname)` on it.
-- This check does not apply to `dirname` itself, or to `key` when passed
-  directly to `Init(dirname, key, block_size, max_file_count)` - both are
-  treated as trusted input supplied by the calling code, the same as any
-  other argument or hardcoded value in a trusted program.
+`key` is restricted to `[A-Za-z0-9_.-]+` (non-empty, no `/`) by both
+`WriteMeta()` and `Init(dirname)`'s `rigel.meta` parser, since it's
+interpolated directly into filesystem paths. Without a path separator
+allowed in `key`, it can never escape `dirname` via `../` traversal -
+which matters because `rigel.meta` is a file inside the directory, so
+its `key` could come from someone other than whoever is currently
+running `rigel` against it. This restriction does not apply to `key`
+when passed directly to `Init(dirname, key, block_size,
+max_file_count)`, which is trusted the same as any other caller-supplied
+value.
 
 ## Limitations
 
