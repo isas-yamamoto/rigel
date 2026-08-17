@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
@@ -30,7 +31,31 @@ const char META_FILENAME[] = "rigel.meta";
 // resource use bounded regardless of how many shards get touched overall;
 // the cost is that a shard evicted and then touched again has to be
 // reopened (one extra open+ftruncate+mmap, same as a first touch).
-const size_t MAX_OPEN_SHARDS = 1024;
+//
+// A flat 1024 broke on hosts where RLIMIT_NOFILE is at or below that (a
+// common default) - the index fd, stdio, and whatever fds the calling
+// process already holds pushed it over, so open() started failing with
+// EMFILE partway through. Scale the cap to the process's actual fd
+// budget instead, leaving headroom for those. Computed once (RLIMIT_NOFILE
+// doesn't change at runtime) and shared by every Rigel instance in the
+// process, since the limit itself is process-wide.
+size_t MaxOpenShards() {
+  static const size_t cap = [] {
+    const size_t kDefaultCap = 1024;
+    const size_t kHeadroom = 64;   // stdio, the index fd, caller's own fds
+    const size_t kMinCap = 8;
+    struct rlimit rl;
+    if (::getrlimit(RLIMIT_NOFILE, &rl) != 0) {
+      return kDefaultCap; // couldn't query; keep the old assumption
+    }
+    if (rl.rlim_cur <= kHeadroom) {
+      return kMinCap;
+    }
+    size_t budget = (size_t)rl.rlim_cur - kHeadroom;
+    return (budget < kDefaultCap) ? budget : kDefaultCap;
+  }();
+  return cap;
+}
 
 // key_ is interpolated directly into filesystem paths (DataFilename,
 // IndexFilename: "dirname/key.NNNN", "dirname/key.index") with no other
@@ -309,10 +334,10 @@ void Rigel::TouchShard(int file_index) {
 
 /**
  *  @brief Closes and unmaps the least-recently-used shards until at most
- *  MAX_OPEN_SHARDS remain open.
+ *  MaxOpenShards() remain open.
  */
 void Rigel::EvictShardsIfNeeded() {
-  while (this->data_maps_.size() > MAX_OPEN_SHARDS && !this->lru_order_.empty()) {
+  while (this->data_maps_.size() > MaxOpenShards() && !this->lru_order_.empty()) {
     int victim = this->lru_order_.back();
     this->lru_order_.pop_back();
     this->lru_pos_.erase(victim);
