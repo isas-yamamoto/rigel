@@ -111,6 +111,7 @@ the shell:
 ```sh
 echo -n "hello" | rigel write /path/to/data 42
 rigel read /path/to/data 42 | hexdump -C
+rigel delete /path/to/data 42        # clears a record back to never-written
 rigel scan /path/to/data          # lists every written index, one per line
 rigel stat /path/to/data          # key, geometry, record count, disk usage
 ```

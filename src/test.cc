@@ -162,6 +162,34 @@ int main() {
           "Init(dirname) rejects a hand-planted rigel.meta with a traversal key");
   }
 
+  // Delete: clears an index back to never-written (Read fails, Scan skips
+  // it), and is a harmless no-op on an index that was never written.
+  {
+    const char* del_dir = "/tmp/rigel_test_delete";
+    ::mkdir(del_dir, 0755);
+
+    rigel::Rigel r6;
+    r6.Init(del_dir, "del", 8, 2);
+
+    unsigned char wbuf[8], rbuf[8];
+    std::memset(wbuf, 'X', 8);
+    check(r6.Write(0, wbuf, 8) == 8, "Delete test: Write succeeds");
+    check(r6.Delete(0), "Delete succeeds on a written index");
+    check(r6.Read(0, rbuf, 8) == -1, "Read fails after Delete");
+    check(r6.Delete(0), "Delete is a no-op on an already-deleted index");
+    check(r6.Delete(999), "Delete is a no-op on a never-written index");
+
+    check(r6.Write(1, wbuf, 8) == 8, "Delete test: second Write succeeds");
+    check(r6.ScanInit(), "Delete test: ScanInit succeeds");
+    bool saw_0 = false, saw_1 = false;
+    int idx;
+    while ((idx = r6.ScanNext()) >= 0) {
+      if (idx == 0) saw_0 = true;
+      if (idx == 1) saw_1 = true;
+    }
+    check(!saw_0 && saw_1, "Scan skips a deleted index but still sees others");
+  }
+
   // LastError(): not set for a normal failure (reading an unwritten index),
   // but populated with a specific reason after misuse (out-of-range index).
   {

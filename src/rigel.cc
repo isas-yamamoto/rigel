@@ -449,6 +449,38 @@ ssize_t Rigel::Write(const int index,
 }
 
 /**
+ *  @brief Clears index so it reads as never-written again.
+ *
+ *  @param[in] index index
+ *  @return true on success (including when index was never written).
+ *  false on failure.
+ */
+bool Rigel::Delete(const int index) {
+  std::lock_guard<std::mutex> lock(this->mutex_);
+
+  if (!this->OpenIndexMapping()) {
+    return false;
+  }
+  if (index < 0 || (size_t)index >= this->index_map_.size ||
+      this->index_map_.ptr[index] != 1) {
+    return true; // never written; nothing to do
+  }
+
+  unsigned long long offset = (unsigned long long)index * this->block_size_;
+  int file_index  = offset / this->max_file_size_;
+  int file_offset = offset % this->max_file_size_;
+
+  DataMapping* dm = this->GetDataMapping(file_index);
+  if (dm == NULL) {
+    return false;
+  }
+  std::memset(dm->ptr + file_offset, 0, this->block_size_);
+
+  this->index_map_.ptr[index] = 0;
+  return true;
+}
+
+/**
  *  @brief Reads data from the position given by index.
  *
  *  @param[in] index index

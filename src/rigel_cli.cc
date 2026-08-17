@@ -5,6 +5,7 @@
  *   rigel init  <dir> <key> [block_size] [max_file_count]
  *   rigel read  <dir> <index>            (writes the raw record to stdout)
  *   rigel write <dir> <index>            (reads the raw record from stdin)
+ *   rigel delete <dir> <index>           (clears a record back to never-written)
  *   rigel scan  <dir> [start]            (lists written indices, one per line)
  *   rigel stat  <dir>                    (prints key/geometry/usage info)
  *   rigel version                        (prints the library version)
@@ -31,6 +32,7 @@ void PrintUsage(const char* prog) {
       "  init  <dir> <key> [block_size] [max_file_count]\n"
       "  read  <dir> <index>       write the raw record to stdout\n"
       "  write <dir> <index>       read the raw record from stdin\n"
+      "  delete <dir> <index>      clear a record back to never-written\n"
       "  scan  <dir> [start]       list written indices, one per line\n"
       "  stat  <dir>               print key/geometry/usage info\n"
       "  version                   print the library version\n",
@@ -122,6 +124,27 @@ int CmdWrite(int argc, char** argv) {
   ssize_t r = rigel.Write(index, buf.data(), n);
   if (r < 0) {
     std::fprintf(stderr, "rigel write: %s\n", rigel.LastError());
+    return 1;
+  }
+  return 0;
+}
+
+int CmdDelete(int argc, char** argv) {
+  if (argc < 3) {
+    std::fprintf(stderr, "usage: rigel delete <dir> <index>\n");
+    return 1;
+  }
+  const char* dirname = argv[1];
+  int index = std::atoi(argv[2]);
+
+  rigel::Rigel rigel;
+  if (!rigel.Init(dirname)) {
+    std::fprintf(stderr, "rigel delete: %s\n", rigel.LastError());
+    return 1;
+  }
+
+  if (!rigel.Delete(index)) {
+    std::fprintf(stderr, "rigel delete: %s\n", rigel.LastError());
     return 1;
   }
   return 0;
@@ -259,6 +282,9 @@ int main(int argc, char** argv) {
   }
   if (std::strcmp(cmd, "write") == 0) {
     return CmdWrite(sub_argc, sub_argv);
+  }
+  if (std::strcmp(cmd, "delete") == 0) {
+    return CmdDelete(sub_argc, sub_argv);
   }
   if (std::strcmp(cmd, "scan") == 0) {
     return CmdScan(sub_argc, sub_argv);

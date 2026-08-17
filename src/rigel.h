@@ -64,6 +64,11 @@ namespace rigel {
                          unsigned char* data,
                          size_t size);
 
+    // Clears index so it reads as never-written (Read returns -1, Scan
+    // skips it) and zeroes its block. A no-op returning true if index was
+    // never written.
+    virtual bool Delete(const int index);
+
     virtual bool ScanInit(const int start=0);
     virtual int ScanNext();
 
