@@ -26,10 +26,23 @@ namespace rigel {
     Rigel();
     virtual ~Rigel();
 
+    // dirname/key/block_size/max_file_countを直接指定する版。
     virtual void Init(const char* dirname,
                       const char* key,
                       const int block_size=BLOCK_SIZE,
                       const int max_file_count=MAX_FILE_COUNT);
+
+    // dirname配下のメタデータファイル(WriteMetaで書かれたもの)からkey/
+    // block_size/max_file_countを読み込んで初期化する版。
+    // メタデータが無い/壊れている場合はfalseを返す。
+    virtual bool Init(const char* dirname);
+
+    // key/block_size/max_file_countをdirname配下にメタデータとして書き込む。
+    // 通常はrigel_initコマンドから呼ばれる。
+    static bool WriteMeta(const char* dirname,
+                          const char* key,
+                          const int block_size=BLOCK_SIZE,
+                          const int max_file_count=MAX_FILE_COUNT);
 
     virtual ssize_t Write(const int index,
                           const unsigned char* data,

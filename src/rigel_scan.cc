@@ -22,7 +22,9 @@ int main(int argc, char** argv) {
   unsigned char buf[PACKET_SIZE];
 
   rigel::Rigel rigel;
-  rigel.Init("/data/rigel/data", "REDACTED.hk");
+  if (!rigel.Init("/data/rigel/data")) {
+    return -1;
+  }
 
   int total_sec = std::atoi(argv[1]);
   int index = total_sec - TI_LAUNCH;

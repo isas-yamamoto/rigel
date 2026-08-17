@@ -53,7 +53,9 @@ int main(int argc, char** argv) {
   std::streamsize r = ccsds.gcount();
 
   rigel::Rigel rigel;
-  rigel.Init("/data/rigel/data", "REDACTED.hk");
+  if (!rigel.Init("/data/rigel/data")) {
+    return -1;
+  }
   rigel.Write(index, buf, r);
 
   return 0;

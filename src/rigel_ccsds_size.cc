@@ -25,7 +25,9 @@ int main(int argc, char** argv) {
   int index = total_sec - TI_LAUNCH;
 
   rigel::Rigel rigel;
-  rigel.Init("/data/rigel/data", "REDACTED.hk");
+  if (!rigel.Init("/data/rigel/data")) {
+    return -1;
+  }
   int r = rigel.Read(index,buf,PACKET_SIZE);
 
   if (r>0) {

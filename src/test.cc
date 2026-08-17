@@ -84,6 +84,26 @@ int main() {
     check(seen[0] && seen[1] && seen[2] && seen[3], "Scan enumerates all written indices");
   }
 
+  // メタデータ経由のInit(dirname)
+  {
+    const char* meta_dir = "/tmp/rigel_test_meta";
+    ::mkdir(meta_dir, 0755);
+    check(rigel::Rigel::WriteMeta(meta_dir, "metatest", 64, 2), "WriteMeta succeeds");
+
+    rigel::Rigel r2;
+    check(r2.Init(meta_dir), "Init(dirname) reads metadata successfully");
+
+    unsigned char wbuf2[64], rbuf2[64];
+    std::memset(wbuf2, 'Z', 64);
+    check(r2.Write(0, wbuf2, 64) == 64, "Write via metadata-initialized Rigel succeeds");
+    check(r2.Read(0, rbuf2, 64) == 64 && std::memcmp(wbuf2, rbuf2, 64) == 0,
+          "Read via metadata-initialized Rigel matches");
+
+    rigel::Rigel r3;
+    check(!r3.Init("/tmp/rigel_test_meta_nonexistent"),
+          "Init(dirname) fails when metadata is missing");
+  }
+
   if (g_fail == 0) {
     std::printf("All tests passed\n");
   } else {

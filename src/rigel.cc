@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include "rigel.h"
 
@@ -17,6 +18,7 @@ namespace rigel
 
 namespace {
 const size_t INDEX_GROW_CHUNK = 1 << 20; // 1MiB分ずつ伸長
+const char META_FILENAME[] = "rigel.meta";
 }
 
 /**
@@ -74,6 +76,78 @@ void Rigel::Init(const char* dirname,
 
   std::strncpy(this->key_, key, MAX_KEY_SIZE-1);
   this->key_[MAX_KEY_SIZE-1] = '\0';
+}
+
+/**
+ *  @brief dirname配下のメタデータファイルを読み、そこに書かれたkey/block_size/
+ *  max_file_countで初期化する。
+ *
+ *  @param[in] dirname ディレクトリ名称
+ *  @return メタデータが正しく読めて初期化できたときはtrueを返す。
+ *  メタデータが無い/壊れているときはfalseを返す。
+ */
+bool Rigel::Init(const char* dirname) {
+  char filename[MAXPATHLEN + 32];
+  std::snprintf(filename, sizeof(filename), "%s/%s", dirname, META_FILENAME);
+
+  FILE* f = std::fopen(filename, "r");
+  if (f == NULL) {
+    std::fprintf(stderr, "ERROR Rigel::Init metadata not found: %s\n", filename);
+    return false;
+  }
+
+  char key[MAX_KEY_SIZE];
+  key[0] = '\0';
+  int block_size = BLOCK_SIZE;
+  int max_file_count = MAX_FILE_COUNT;
+
+  char line[512];
+  while (std::fgets(line, sizeof(line), f) != NULL) {
+    char name[64];
+    char value[448];
+    if (std::sscanf(line, "%63[^=]=%447[^\n]", name, value) == 2) {
+      if (std::strcmp(name, "key") == 0) {
+        std::strncpy(key, value, MAX_KEY_SIZE-1);
+        key[MAX_KEY_SIZE-1] = '\0';
+      } else if (std::strcmp(name, "block_size") == 0) {
+        block_size = std::atoi(value);
+      } else if (std::strcmp(name, "max_file_count") == 0) {
+        max_file_count = std::atoi(value);
+      }
+    }
+  }
+  std::fclose(f);
+
+  if (key[0] == '\0' || block_size <= 0 || max_file_count <= 0) {
+    std::fprintf(stderr, "ERROR Rigel::Init invalid metadata: %s\n", filename);
+    return false;
+  }
+
+  this->Init(dirname, key, block_size, max_file_count);
+  return true;
+}
+
+/**
+ *  @brief dirname配下にkey/block_size/max_file_countをメタデータとして書き込む。
+ *
+ *  @return 成功したときはtrueを返す。
+ */
+bool Rigel::WriteMeta(const char* dirname,
+                      const char* key,
+                      const int block_size,
+                      const int max_file_count) {
+  char filename[MAXPATHLEN + 32];
+  std::snprintf(filename, sizeof(filename), "%s/%s", dirname, META_FILENAME);
+
+  FILE* f = std::fopen(filename, "w");
+  if (f == NULL) {
+    return false;
+  }
+  std::fprintf(f, "key=%s\n", key);
+  std::fprintf(f, "block_size=%d\n", block_size);
+  std::fprintf(f, "max_file_count=%d\n", max_file_count);
+  std::fclose(f);
+  return true;
 }
 
 void Rigel::DataFilename(int file_index, char* buf, size_t buflen) const {

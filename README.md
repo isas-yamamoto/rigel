@@ -17,6 +17,9 @@ C++ライブラリ。衛星テレメトリ(REDACTED/REDACTED搭載機器)のよ�
   のindexを読もうとすると失敗を返す。
 - データファイル・indexファイルは `mmap` している。一度開いたら閉じず、以後は
   ポインタ演算 + `memcpy` のみで読み書きする（詳細は下記ベンチマーク参照）。
+- 1ディレクトリ = 1系列(key)。`rigel_init` コマンドで `key`/`block_size`/
+  `max_file_count` をディレクトリ配下のメタデータファイルに書いておけば、
+  以後は `Init(dirname)` だけで済む（下記参照）。
 
 ## ビルド
 
@@ -37,17 +40,32 @@ g++/clang++ 環境では `CXX=g++` を明示する。C++11以上が必要（`std
 | 共有ライブラリ | `librigel.so` |
 | 静的ライブラリ | `librigel.a` |
 | ヘッダ | `rigel.h` |
-| CLIツール | `rigel_read` `rigel_write` `rigel_scan` `rigel_ccsds_size` |
+| CLIツール | `rigel_read` `rigel_write` `rigel_scan` `rigel_ccsds_size` `rigel_init` |
 | テスト | `test` |
 | ベンチマーク | `bench` |
 
 ## 使い方
 
+まず `rigel_init` でディレクトリを初期化する（1回だけ）。
+
+```sh
+./rigel_init /path/to/data mykey 1024 131072   # dirname key block_size max_file_count
+```
+
+これで `/path/to/data/rigel.meta` にkey/block_size/max_file_countが書き込まれる。
+既にメタデータがあるディレクトリに対しては（既存データが壊れるため）実行を拒否
+する。block_size/max_file_countを省略すると既定値（`BLOCK_SIZE`=1024,
+`MAX_FILE_COUNT`=131072）が使われる。
+
+あとはコード側は `Init(dirname)` だけで良い:
+
 ```cpp
 #include "rigel.h"
 
 rigel::Rigel rigel;
-rigel.Init("/path/to/data", "mykey", /*block_size=*/1024, /*max_file_count=*/131072);
+if (!rigel.Init("/path/to/data")) {
+  // rigel_init前 or メタデータ破損
+}
 
 unsigned char buf[1024] = { ... };
 rigel.Write(index, buf, sizeof(buf));
@@ -62,8 +80,12 @@ while ((idx = rigel.ScanNext()) >= 0) {
 }
 ```
 
-`dirname` 配下に `<key>.<file_index 4桁>` というデータファイルと `<key>.index`
-というインデックスファイルが作られる。
+block_size/max_file_countをコード側で明示的に指定したい場合（テストで小さい
+shardを使いたい場合など）は、従来通り `Init(dirname, key, block_size,
+max_file_count)` も使える。
+
+`dirname` 配下には `rigel.meta` の他、`<key>.<file_index 4桁>` というデータ
+ファイルと `<key>.index` というインデックスファイルが作られる。
 
 ## テスト・ベンチマーク
 

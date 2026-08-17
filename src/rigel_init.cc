@@ -1,98 +1,50 @@
+/**
+ * rigel_init: Rigelデータディレクトリにメタデータ(key/block_size/max_file_count)
+ * を書き込む。
+ *
+ * Usage: rigel_init <dirname> <key> [block_size] [max_file_count]
+ *
+ * 一度メタデータを書いたディレクトリに対して、異なるblock_size/max_file_count
+ * で再度initすると、以後のRead()のオフセット計算が既存データと食い違って
+ * 読み出しが壊れるため、既にメタデータがあるディレクトリへの上書きは拒否する。
+ */
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
-#include <regex>
-#include <string>
-#include <vector>
-
-// LAUNCH: 01:31:01, 14 September 2007 UTC
-int TI_LAUNCH = 873768659;
-
-// FINISH: 18:25:00, 10 Jun 2009 UTC
-int TI_FINISH = 928693490;
-
-// 2GB
-//unsigned long long MAXFILESIZE = 2147483648;
-
-// 128MB
-unsigned long long MAXFILESIZE = 134217728;
-
-const int PACKET_SIZE = 1024;
-
-namespace {
-
-// ファイル名（例: ".../123456789-foo.dat"）から先頭9桁のタイムスタンプを取り出す。
-int ParseTotalSecFromFilename(const char* path) {
-  std::string s(path);
-  size_t slash = s.find_last_of('/');
-  if (slash != std::string::npos) {
-    s = s.substr(slash + 1);
-  }
-  static const std::regex re("^([0-9]{9})-.*");
-  std::smatch m;
-  if (std::regex_match(s, m, re)) {
-    s = m[1].str();
-  }
-  return std::atoi(s.c_str());
-}
-
-// 既存ファイルなら開き、無ければ新規作成してランダムアクセス用に開く。
-bool OpenRandomAccess(std::fstream& fs, const char* filename) {
-  fs.open(filename, std::ios::in | std::ios::out | std::ios::binary);
-  if (!fs.is_open()) {
-    fs.clear();
-    fs.open(filename, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc);
-  }
-  return fs.is_open();
-}
-
-} // namespace
+#include <sys/stat.h>
+#include "rigel.h"
 
 int main(int argc, char** argv) {
-  char buf[PACKET_SIZE];
-
-  std::ifstream ccsds(argv[1], std::ios::binary);
-  if (!ccsds.is_open()) {
-    return -1;
+  if (argc < 3) {
+    std::fprintf(stderr, "usage: %s <dirname> <key> [block_size] [max_file_count]\n", argv[0]);
+    return 1;
   }
 
-  std::fstream fi;
-  OpenRandomAccess(fi, "data/REDACTED.hk.index");
+  const char* dirname = argv[1];
+  const char* key = argv[2];
+  int block_size = (argc > 3) ? std::atoi(argv[3]) : rigel::BLOCK_SIZE;
+  int max_file_count = (argc > 4) ? std::atoi(argv[4]) : rigel::MAX_FILE_COUNT;
 
-  int num_file = (int)((double)(TI_FINISH - TI_LAUNCH) * PACKET_SIZE / MAXFILESIZE) + 1;
+  ::mkdir(dirname, 0755);
 
-  std::vector<std::fstream> sdata(num_file);
-  for(int i=0; i<num_file; ++i) {
-    char filename[64];
-    std::snprintf(filename, sizeof(filename), "data/REDACTED.hk.%03d", i);
-    OpenRandomAccess(sdata[i], filename);
+  char meta_filename[1024];
+  std::snprintf(meta_filename, sizeof(meta_filename), "%s/rigel.meta", dirname);
+
+  struct stat st;
+  if (::stat(meta_filename, &st) == 0) {
+    std::fprintf(stderr,
+                  "ERROR: %s already exists. Refusing to overwrite an existing data "
+                  "directory's metadata (a different block_size/max_file_count would "
+                  "corrupt reads of already-written data).\n",
+                  meta_filename);
+    return 1;
   }
 
-  int total_sec = ParseTotalSecFromFilename(argv[1]);
-  int index = total_sec - TI_LAUNCH;
-
-  unsigned long long offset = index;
-  offset *= 1024;
-
-  int file_index = offset / MAXFILESIZE;
-  int file_offset = offset % MAXFILESIZE;
-
-  std::printf("%d %d %llu %d\n", total_sec, index, offset, file_index);
-
-  if ( file_index < 0 || file_index >= num_file ) {
-    std::printf("invalid file index: %d\n", num_file);
-    return -1;
+  if (!rigel::Rigel::WriteMeta(dirname, key, block_size, max_file_count)) {
+    std::fprintf(stderr, "ERROR: failed to write metadata to %s\n", dirname);
+    return 1;
   }
 
-  std::streamsize r;
-  while ( ccsds.read(buf, PACKET_SIZE), (r = ccsds.gcount()) > 0 ) {
-    sdata[file_index].seekp(file_offset, std::ios::beg);
-    sdata[file_index].write(buf, r);
-  }
-
-  buf[0] = 1;
-  fi.seekp(index, std::ios::beg);
-  fi.write(buf, 1);
-
+  std::printf("initialized %s (key=%s block_size=%d max_file_count=%d)\n",
+              dirname, key, block_size, max_file_count);
   return 0;
 }
