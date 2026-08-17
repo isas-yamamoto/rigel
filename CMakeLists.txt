@@ -9,9 +9,9 @@ endif()
 
 find_package(Threads REQUIRED)
 
-# One object library so the shared and static builds don't compile rigel.cc
-# twice.
-add_library(rigel_obj OBJECT src/rigel.cc src/rigel_c.cc)
+# One object library so the shared and static builds don't compile the
+# sources twice.
+add_library(rigel_obj OBJECT src/rigel.cc src/rigel_meta.cc src/rigel_c.cc)
 set_target_properties(rigel_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(rigel_obj PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>

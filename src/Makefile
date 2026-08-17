@@ -3,7 +3,7 @@ CC=gcc
 CXXFLAGS=-Wall -O3 -std=c++11 -fPIC -pthread
 CFLAGS=-Wall -O3 -std=c99
 LDFLAGS=-pthread
-OBJS=rigel.o rigel_c.o
+OBJS=rigel.o rigel_meta.o rigel_c.o
 
 # Keep in sync with rigel::VERSION in rigel.h.
 VERSION=1.0.0
@@ -66,4 +66,4 @@ uninstall:
 
 .PHONY: clean
 clean:
-	$(RM) rigel.o rigel_c.o rigel_cli.o rigel librigel.so librigel.a test.o test test_c.o test_c
+	$(RM) rigel.o rigel_meta.o rigel_c.o rigel_cli.o rigel librigel.so librigel.a test.o test test_c.o test_c
