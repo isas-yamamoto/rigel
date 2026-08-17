@@ -433,6 +433,9 @@ ssize_t Rigel::Write(const int index,
     return -1;
   }
   std::memcpy(dm->ptr + file_offset, data, size);
+  if (size < (size_t)this->block_size_) {
+    std::memset(dm->ptr + file_offset + size, 0, this->block_size_ - size);
+  }
 
   if (!this->OpenIndexMapping()) {
     return -1;
