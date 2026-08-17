@@ -46,6 +46,14 @@ std::string RunCapture(const std::string& cmd) {
 
 // Runs cmd via the shell, feeding it `input` on stdin. Returns true if the
 // subprocess exited successfully.
+// std::system() is declared warn_unused_result on glibc; these calls are
+// best-effort cleanup where a failure (e.g. dir didn't exist yet) doesn't
+// matter, so discard the result explicitly rather than let -Werror flag it.
+void RunShellBestEffort(const std::string& cmd) {
+  int rc = std::system(cmd.c_str());
+  (void)rc;
+}
+
 bool RunWithStdin(const std::string& cmd, const std::string& input) {
   FILE* p = ::popen(cmd.c_str(), "w");
   if (p == NULL) {
@@ -63,7 +71,7 @@ int main() {
 
   // Start from a clean slate: `rigel init` refuses to run against a
   // directory that already has metadata from a previous test run.
-  std::system(("rm -rf " + dir).c_str());
+  RunShellBestEffort("rm -rf " + dir);
   ::mkdir(dir.c_str(), 0755);
 
   check(RunCapture(cli + " init " + dir + " testkey 4 100").find("initialized") == 0,
@@ -103,7 +111,7 @@ int main() {
     check(out == raw_expected_str, "dump --raw emits concatenated raw block bytes");
   }
 
-  std::system(("rm -rf " + dir).c_str());
+  RunShellBestEffort("rm -rf " + dir);
 
   if (g_fail == 0) {
     std::printf("All tests passed\n");
